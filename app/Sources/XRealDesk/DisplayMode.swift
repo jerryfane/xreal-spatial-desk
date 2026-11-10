@@ -41,10 +41,6 @@ final class DisplayModeController: @unchecked Sendable {
     private var link: GlassesLink?
     private var replies: [UInt32: SetReply] = [:]
     private var controlConnected = false
-    private var switchedThisRun = false
-
-    /// Whether this run ever sent side-by-side (so quitting must wait until the glasses have left it).
-    var modeWasSwitchedThisRun: Bool { lock.withLock { switchedThisRun } }
 
     func attach(_ link: GlassesLink) {
         lock.withLock { self.link = link }
@@ -79,7 +75,6 @@ final class DisplayModeController: @unchecked Sendable {
         do {
             let keeper = self.keeper
             let tx = try link.send(mode) { keeper.sent(mode, transactionID: $0) }
-            if mode == .sideBySide { lock.withLock { switchedThisRun = true } }
             Log.line("display mode: sent \(mode) (\(why)), tx \(tx): \(hex(mode.request(transactionID: tx).encoded()))")
             return tx
         } catch {
@@ -140,12 +135,16 @@ final class DisplayModeController: @unchecked Sendable {
                 return
             }
         }
-        // Nothing switched by us and the glasses are side-by-side on their own: they stay so; nothing to wait for.
-        guard keeper.pendingRestore == nil, modeWasSwitchedThisRun else { return }
+        // Wait while a switch by this run or a crashed one is accepted but not yet visible. If the glasses were never
+        // switched by us, nothing is awaited (they may be side-by-side on their own and stay so).
+        guard let original = keeper.awaitingPhysicalRestore else { return }
         let deadline = Date(timeIntervalSinceNow: 6)
-        while Date() < deadline, GlassesDisplay.find(excluding: virtual)?.mode == .sideBySide {
+        while Date() < deadline {
+            if let mode = GlassesDisplay.find(excluding: virtual)?.mode { keeper.glassesObserved(mode) }
+            if keeper.awaitingPhysicalRestore == nil { break }
             Thread.sleep(forTimeInterval: 0.25)
         }
+        if keeper.awaitingPhysicalRestore != nil { Log.line("display mode: glasses not seen back in \(original) within 6 s") }
         Log.line("display mode: on quit the glasses are \(GlassesDisplay.find(excluding: virtual)?.description ?? "not identified: \(describeDisplays())")")
     }
 

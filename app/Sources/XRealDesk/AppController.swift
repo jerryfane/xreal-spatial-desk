@@ -169,9 +169,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
         guard let window = renderWindow else { return nil }
         let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
+        if forceGlasses == nil, let mode = glasses?.mode { modes.keeper.glassesObserved(mode) }
+        // Keep the glasses covered while side-by-side is wanted, while they show it, and while a switch back (this
+        // run's or a crashed run's) is accepted but not yet visible.
         let target = RenderTarget.choose(outputDisplay: options.outputDisplay, glassesDisplay: glasses?.id,
                                          glassesSideBySide: glasses?.mode == .sideBySide,
-                                         sideBySideWanted: forceGlasses != nil || sideBySideOn)
+                                         sideBySideWanted: forceGlasses != nil || sideBySideOn
+                                             || modes.keeper.awaitingPhysicalRestore != nil)
         if case .display(let id) = target, let screen = NSScreen.screens.first(where: { $0.displayID == id }) {
             window.styleMask = [.borderless]
             window.level = .screenSaver

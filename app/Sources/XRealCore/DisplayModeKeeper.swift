@@ -19,12 +19,27 @@ public final class DisplayModeKeeper: @unchecked Sendable {
     private var desired: DisplayInputMode?
     private var inFlight: [UInt32: DisplayInputMode] = [:]
     private var lastResult: (mode: DisplayInputMode, result: SetReply.Result)?
+    /// The original mode, from the moment the glasses were switched away from it (this run, or a crashed earlier run
+    /// found at launch) until `glassesObserved` sees them back in it. Unlike `original`, this survives the accepted
+    /// reply: the display changes ~2.4 s later, and until then the glasses must stay covered.
+    private var physicalRestore: DisplayInputMode?
 
     public init(markerURL: URL) {
         self.markerURL = markerURL
         original = (try? String(contentsOf: markerURL, encoding: .utf8))
             .flatMap { UInt8($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             .flatMap(DisplayInputMode.init(rawValue:))
+        physicalRestore = original
+    }
+
+    /// The mode the glasses still have to show again before they may be uncovered; nil once they are seen in it.
+    public var awaitingPhysicalRestore: DisplayInputMode? { lock.withLock { physicalRestore } }
+
+    /// Call with the glasses' mode as currently seen (display size). Seeing them in the original mode ends the wait.
+    public func glassesObserved(_ mode: DisplayInputMode) {
+        lock.withLock {
+            if mode == physicalRestore, original == nil { physicalRestore = nil }
+        }
     }
 
     /// `~/Library/Application Support/XRealDesk/display-mode-restore`.
@@ -56,6 +71,7 @@ public final class DisplayModeKeeper: @unchecked Sendable {
                 guard mode != current else { desired = nil; return nil }
                 try writeMarker(current)
                 original = current
+                physicalRestore = current
             }
             desired = mode
             return mode

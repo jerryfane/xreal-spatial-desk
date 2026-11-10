@@ -87,6 +87,48 @@ final class DisplayModeKeeperTests: XCTestCase {
         XCTAssertEqual(keeper.restore(), .regular)
     }
 
+    /// Quitting may uncover the glasses only once they are seen back in the original mode, which happens ~2.4 s after
+    /// the accepted reply. Three ways to get there: restore at quit, restore earlier from the menu, crash recovery.
+    func testGlassesStayCoveredUntilSeenBackInTheOriginalMode() throws {
+        // This run switched, then restored (menu or quit): accepted, but the display has not changed yet.
+        let keeper = DisplayModeKeeper(markerURL: marker)
+        XCTAssertNil(keeper.awaitingPhysicalRestore)
+        _ = try keeper.request(.sideBySide, current: .regular)
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular)
+        XCTAssertEqual(keeper.restore(), .regular)
+        keeper.sent(.regular, transactionID: 1)
+        keeper.handle(accepted(1))
+        XCTAssertNil(keeper.pendingRestore, "nothing left to send")
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular, "but the glasses are not back yet")
+        keeper.glassesObserved(.sideBySide)
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular)
+        keeper.glassesObserved(.regular)
+        XCTAssertNil(keeper.awaitingPhysicalRestore)
+    }
+
+    func testCrashRecoveryAlsoKeepsTheGlassesCoveredUntilRestored() throws {
+        do {
+            let crashed = DisplayModeKeeper(markerURL: marker)
+            _ = try crashed.request(.sideBySide, current: .regular)
+        }
+        // The new run never asks for side-by-side; it only recovers.
+        let next = DisplayModeKeeper(markerURL: marker)
+        XCTAssertEqual(next.awaitingPhysicalRestore, .regular)
+        next.sent(.regular, transactionID: 2)
+        next.handle(accepted(2))
+        XCTAssertEqual(next.awaitingPhysicalRestore, .regular)
+        next.glassesObserved(.regular)
+        XCTAssertNil(next.awaitingPhysicalRestore)
+    }
+
+    func testSeeingTheOriginalModeBeforeTheRestoreIsAcceptedDoesNotEndTheWait() throws {
+        // E.g. observed in the instant before the switch took effect: the restore is still owed.
+        let keeper = DisplayModeKeeper(markerURL: marker)
+        _ = try keeper.request(.sideBySide, current: .regular)
+        keeper.glassesObserved(.regular)
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular)
+    }
+
     func testNoSwitchWhenTheOriginalCannotBeRecorded() throws {
         // A regular file where the directory should be: the marker cannot be written.
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
