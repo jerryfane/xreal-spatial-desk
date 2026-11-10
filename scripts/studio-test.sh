@@ -14,7 +14,8 @@ studio=${STUDIO:-jerry@100.111.92.43}
 out=${OUT:-studio-output/$sha.txt}
 mkdir -p "$(dirname "$out")"
 
-if ssh "$studio" 'pgrep -fl macserve-admin'; then
+# The persistent ledger service (macserve-admin ledger-serve / setup-ledger serve) is not an admin step.
+if ssh "$studio" 'pgrep -fl macserve-admin | grep -v -E "ledger-serve|setup-ledger serve"'; then
   echo "a macserve admin step is in progress on the Studio; not running" >&2
   exit 3
 fi
