@@ -49,8 +49,9 @@ public enum DisplayInputMode: UInt8, CaseIterable, Sendable {
     }
 }
 
-/// Reply to a `DisplayInputMode` request. Not yet captured on hardware; per the community tools the body is
-/// `22 LL { 08 status }`, where an empty field 4 or status 0 means accepted.
+/// Reply to a `DisplayInputMode` request. Captured on firmware 1.9.1 (2026-11-10): body `22 00` (empty field 4) for
+/// an accepted switch, both directions. Rejections were not seen; per the community tools they carry
+/// `22 LL { 08 status }` with a nonzero status.
 public struct SetReply: Equatable, Sendable {
     public var transactionID: UInt32
     /// Raw body after the transaction ID, kept so the first real replies can be logged.

@@ -84,10 +84,14 @@ final class ControlTests: XCTestCase {
             var decoder = FrameDecoder()
             return ControlMessage(try! decoder.push(Fixtures.bytes(hex))[0])
         }
-        // 2822 | len | txid 5 | body. Shapes as the community tools parse them; not yet captured on hardware.
-        guard case .setReply(let ok) = reply("282200000006000000052200") else { return XCTFail() }
-        XCTAssertEqual(ok.transactionID, 5)
+        // Captured on the glasses (firmware 1.9.1, 2026-11-10): the reply to tx 6 (side-by-side) and tx 7 (regular).
+        guard case .setReply(let ok) = reply("282200000006000000062200") else { return XCTFail() }
+        XCTAssertEqual(ok.transactionID, 6)
         XCTAssertEqual(ok.result, .accepted)
+        guard case .setReply(let back) = reply("282200000006000000072200") else { return XCTFail() }
+        XCTAssertEqual(back.transactionID, 7)
+        XCTAssertEqual(back.result, .accepted)
+        // Other shapes, as the community tools parse them; not seen on this unit.
         XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("22020800")).result, .accepted)
         XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("220308914e")).result, .rejected(status: 10001))
         XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("1800")).result, .unrecognised)
