@@ -72,7 +72,8 @@ display with `--output ID` (for example the glasses' display). Black is see-thro
 
 ## Testing on a Mac with the glasses
 
-Needs macOS 14+. The glasses connect over USB-C; no driver. The app only sends the five read-only GETs.
+Needs macOS 14+. The glasses connect over USB-C; no driver. The app sends the five read-only GETs and, only when
+asked, one setting: side-by-side input mode (below).
 
 1. **Download** `XRealDesk.zip` from the repository's
    [Releases](https://github.com/jerryfane/xreal-spatial-desk/releases) (universal: Apple Silicon and Intel) and
@@ -90,10 +91,26 @@ Needs macOS 14+. The glasses connect over USB-C; no driver. The app only sends t
    reuse the running copy. In Terminal, `open /Applications/XRealDesk.app --args --out /tmp/xreal-run`; the
    glasses' display ID is in `/tmp/xreal-run/log.txt` ("displays before: …"). Quit again, then
    `open /Applications/XRealDesk.app --args --output <ID>` fills that display with the side-by-side image.
-   Without side-by-side input mode (a SET command, milestone 1) the glasses show the 3840×1080 image squeezed into
-   1920×1080, so both eyes see both halves; tracking, buttons, wear events and capture can still be checked.
+   Until side-by-side mode is on, the glasses show the 3840×1080 image squeezed into 1920×1080, so both eyes see both
+   halves.
+6. **Side-by-side 3D.** **XR** › **Side-by-side 3D on the glasses** (or start with `--args --sbs`) switches the glasses
+   to side-by-side input: they briefly blank and come back as a 3840×1080 display, then each eye sees only its own
+   half. Choosing it again, or quitting, switches them back. If the app crashes while switched, the next start
+   switches them back as soon as they connect.
 
-`/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, buttons, wear events and frame rates.
+`/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, the exact mode-switch frames and replies,
+buttons, wear events and frame rates.
+
+### First side-by-side run (checks the mode switch step by step)
+
+```sh
+open -W /Applications/XRealDesk.app --args --sbs-check --out /tmp/xreal-sbs
+cat /tmp/xreal-sbs/log.txt
+```
+
+It reads the glasses' mode (from their display size), switches to side-by-side, checks that they come back as
+3840×1080, waits 5 s, switches back, checks 1920×1080, and quits. Each step and each reply is logged byte for byte;
+the last line is `sbs-check: RESULT PASS` or `FAIL`. On any error or mismatch it switches back and stops.
 
 ### Building it yourself
 
