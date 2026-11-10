@@ -12,6 +12,8 @@ public final class DisplayModeKeeper: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    /// Held while a request is chosen and written, so requests reach the glasses in the order intents were set.
+    private let sendMutex = NSLock()
     private let markerURL: URL
     /// Mode the glasses had before this app (or a crashed earlier run) switched them; nil if not switched.
     private var original: DisplayInputMode?
@@ -65,9 +67,29 @@ public final class DisplayModeKeeper: @unchecked Sendable {
     /// Result of the last reply to a mode request.
     public var last: (mode: DisplayInputMode, result: SetReply.Result)? { lock.withLock { lastResult } }
 
-    /// The mode to send when the control channel (re)connects: this run's wish, else a restore left by a crash.
-    public func modeToSendOnConnect() -> DisplayInputMode? {
-        lock.withLock { desired ?? original }
+    /// Sends what the glasses should be in now: this run's wish, else a restore left by a crash; nothing if neither.
+    ///
+    /// Every request goes through here (connect replay, menu, quit), and the mode is read while the send mutex is
+    /// held: so a request chosen before an intent change is always written before the request that follows it, and
+    /// the last request on the wire is always the latest intent. `send` must call `register` with the transaction ID
+    /// before writing (GlassesLink does), so a fast reply finds it.
+    @discardableResult
+    public func sendIntent(_ send: (DisplayInputMode, _ register: (UInt32) -> Void) throws -> UInt32) throws
+        -> (mode: DisplayInputMode, transactionID: UInt32)? {
+        sendMutex.lock()
+        defer { sendMutex.unlock() }
+        guard let mode = lock.withLock({ desired ?? original }) else { return nil }
+        let tx = try send(mode) { self.sent(mode, transactionID: $0) }
+        return (mode, tx)
+    }
+
+    /// The control connection dropped: replies to requests sent on it will never come. Call it only after the link
+    /// has dropped the socket (GlassesLink does before reporting the disconnect). Waits for a send in progress, which
+    /// may still hold the old socket and register after this point otherwise; later sends cannot register on it.
+    public func connectionLost() {
+        sendMutex.lock()
+        defer { sendMutex.unlock() }
+        lock.withLock { inFlight.removeAll() }
     }
 
     /// Asks for `mode`. `current` is the glasses' mode as observed now (from their display size). Writes the marker
@@ -107,8 +129,9 @@ public final class DisplayModeKeeper: @unchecked Sendable {
             guard let mode = inFlight.removeValue(forKey: reply.transactionID) else { return nil }
             let result = reply.result
             lastResult = (mode, result)
-            // Back in the original mode, and this run no longer wants anything else: nothing left to undo.
-            if result == .accepted, mode == original, desired == nil || desired == mode {
+            // Back in the original mode, this run wants nothing else, and no other request can still land after this
+            // one: nothing left to undo.
+            if result == .accepted, mode == original, desired == nil || desired == mode, inFlight.isEmpty {
                 try? FileManager.default.removeItem(at: markerURL)
                 original = nil
                 desired = nil

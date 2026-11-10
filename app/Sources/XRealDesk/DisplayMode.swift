@@ -56,8 +56,9 @@ final class DisplayModeController: @unchecked Sendable {
         switch event {
         case .connected(.control):
             lock.withLock { controlConnected = true; lock.broadcast() }
-            if let mode = keeper.modeToSendOnConnect() { send(mode, why: "on connect") }
+            send(why: "on connect")
         case .disconnected(.control, _):
+            keeper.connectionLost()
             lock.withLock { controlConnected = false }
         case .control(.setReply(let r)):
             let mode = keeper.handle(r)
@@ -68,24 +69,27 @@ final class DisplayModeController: @unchecked Sendable {
         }
     }
 
-    /// Sends `mode` if the control channel is up; logs the exact frame. Returns the transaction ID.
+    /// Sends the keeper's current intent (see `DisplayModeKeeper.sendIntent`) if the control channel is up; logs the
+    /// exact frame. Change the intent first (`keeper.request` / `keeper.restore`), then call this. Returns the
+    /// transaction ID, or nil if nothing was sent.
     @discardableResult
-    func send(_ mode: DisplayInputMode, why: String) -> UInt32? {
+    func send(why: String) -> UInt32? {
         guard let link = lock.withLock({ link }) else { return nil }
         do {
-            let keeper = self.keeper
-            let tx = try link.send(mode) { keeper.sent(mode, transactionID: $0) }
-            Log.line("display mode: sent \(mode) (\(why)), tx \(tx): \(hex(mode.request(transactionID: tx).encoded()))")
-            return tx
+            guard let sent = try keeper.sendIntent({ mode, register in try link.send(mode, register: register) }) else {
+                return nil
+            }
+            Log.line("display mode: sent \(sent.mode) (\(why)), tx \(sent.transactionID): \(hex(sent.mode.request(transactionID: sent.transactionID).encoded()))")
+            return sent.transactionID
         } catch {
-            Log.line("display mode: \(mode) not sent (\(why)): \(error)")
+            Log.line("display mode: not sent (\(why)): \(error)")
             return nil
         }
     }
 
-    /// Sends `mode` and waits for its reply.
-    func sendAndWait(_ mode: DisplayInputMode, why: String, timeout: TimeInterval = 5) -> SetReply? {
-        guard let tx = send(mode, why: why) else { return nil }
+    /// Sends the current intent and waits for its reply.
+    func sendAndWait(why: String, timeout: TimeInterval = 5) -> SetReply? {
+        guard let tx = send(why: why) else { return nil }
         let deadline = Date(timeIntervalSinceNow: timeout)
         lock.lock()
         defer { lock.unlock() }
@@ -109,12 +113,12 @@ final class DisplayModeController: @unchecked Sendable {
             return false
         }
         do {
-            guard let toSend = try keeper.request(mode, current: current) else {
+            guard try keeper.request(mode, current: current) != nil else {
                 Log.line("display mode: glasses already \(mode)")
                 return true
             }
-            if send(toSend, why: "requested") == nil {
-                Log.line("display mode: will send \(toSend) when the glasses connect")
+            if send(why: "requested") == nil {
+                Log.line("display mode: will send \(mode) when the glasses connect")
             }
             return true
         } catch {
@@ -129,7 +133,7 @@ final class DisplayModeController: @unchecked Sendable {
     /// reply), and until they finish the caller must keep them covered.
     func restoreBlocking(excluding virtual: CGDirectDisplayID?, timeout: TimeInterval = 3) {
         if let mode = keeper.restore() {
-            let reply = sendAndWait(mode, why: "restore", timeout: timeout)
+            let reply = sendAndWait(why: "restore", timeout: timeout)
             if reply?.result != .accepted {
                 Log.line("display mode: restore to \(mode) NOT confirmed; it is retried on the next start")
                 return
@@ -173,7 +177,7 @@ final class DisplayModeController: @unchecked Sendable {
         guard (try? keeper.request(.sideBySide, current: .regular)) != nil else {
             step("RESULT FAIL: cannot record the original mode; nothing sent"); return false
         }
-        let reply = sendAndWait(.sideBySide, why: "check step 2")
+        let reply = sendAndWait(why: "check step 2")
         step("2 set side-by-side: reply \(reply.map { "\(hex($0.body)) → \($0.result)" } ?? "none")")
         var ok = reply?.result == .accepted
         if ok {
@@ -183,7 +187,8 @@ final class DisplayModeController: @unchecked Sendable {
             if ok { Thread.sleep(forTimeInterval: 5) }
         }
         if !ok { step("stopping after a mismatch; restoring") }
-        let restore = sendAndWait(keeper.restore() ?? .regular, why: "check step 4")
+        _ = keeper.restore()
+        let restore = sendAndWait(why: "check step 4")
         step("4 restore regular: reply \(restore.map { "\(hex($0.body)) → \($0.result)" } ?? "none")")
         let back = DisplayModeController.waitForGlasses(.regular, excluding: nil, timeout: 15)
         step("5 read back: \(back?.description ?? "no 1920x1080 glasses display within 15 s: \(describeDisplays())")")
