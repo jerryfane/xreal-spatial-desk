@@ -83,8 +83,12 @@ public final class DisplayModeKeeper: @unchecked Sendable {
         return (mode, tx)
     }
 
-    /// The control connection dropped: replies to requests sent on it will never come.
+    /// The control connection dropped: replies to requests sent on it will never come. Call it only after the link
+    /// has dropped the socket (GlassesLink does before reporting the disconnect). Waits for a send in progress, which
+    /// may still hold the old socket and register after this point otherwise; later sends cannot register on it.
     public func connectionLost() {
+        sendMutex.lock()
+        defer { sendMutex.unlock() }
         lock.withLock { inFlight.removeAll() }
     }
 

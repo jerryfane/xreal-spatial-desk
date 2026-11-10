@@ -233,4 +233,34 @@ final class DisplayModeKeeperTests: XCTestCase {
         XCTAssertNil(keeper.pendingRestore)
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
+
+    // PR #10 review: a send holding the old socket registered after the disconnect cleanup; its reply never came, and
+    // the leftover request kept every later restore from counting as done.
+    func testADisconnectDuringASendDoesNotLeaveAStaleRequest() throws {
+        let keeper = DisplayModeKeeper(markerURL: marker)
+        _ = try keeper.request(.sideBySide, current: .regular)
+        keeper.handle(accepted(try XCTUnwrap(sendIntent(keeper)).transactionID))
+        _ = keeper.restore()
+        let captured = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0), done = DispatchGroup()
+        // The menu's restore has the old socket but has not registered yet.
+        DispatchQueue.global().async(group: done) {
+            _ = try? keeper.sendIntent { _, register in
+                captured.signal()
+                release.wait()
+                register(1)  // written to the dead socket: no reply ever
+                return 1
+            }
+        }
+        captured.wait()
+        // The control worker reports the disconnect meanwhile.
+        DispatchQueue.global().async(group: done) { keeper.connectionLost() }
+        Thread.sleep(forTimeInterval: 0.2)
+        release.signal()
+        XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
+
+        let again = try XCTUnwrap(sendIntent(keeper), "restore replayed on reconnect")
+        keeper.handle(accepted(again.transactionID))
+        XCTAssertNil(keeper.pendingRestore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "restored: nothing left to undo")
+    }
 }
