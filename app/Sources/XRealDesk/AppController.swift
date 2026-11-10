@@ -51,7 +51,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         startRenderer()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
                                                queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { _ = self?.placeRenderWindow(reason: "displays changed") }
+            MainActor.assumeIsolated { _ = self?.placeRenderWindow(.displaysChanged) }
         }
         if options.sbs { setSideBySide(true) }
         makeStatusItem()
@@ -149,7 +149,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             // Cover the glasses with our image before they switch, so neither eye ever sees half a desktop. If they
             // cannot be covered (no renderer, screen not found), do not switch.
-            guard placeRenderWindow(reason: "side-by-side on", forceGlasses: glasses) == glasses.id else {
+            guard placeRenderWindow(.sideBySideOn, forceGlasses: glasses) == glasses.id else {
                 Log.line("display mode: could not cover the glasses with the image; side-by-side not switched on")
                 updateStatus()
                 return
@@ -168,7 +168,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// target or the target screen's frame changed, so whatever cleared or set a condition, the next call reconciles.
     /// Returns the display now covered.
     @discardableResult
-    private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
+    private func placeRenderWindow(_ trigger: PlacementTrigger, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
         guard let window = renderWindow else { return nil }
         let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
         if forceGlasses == nil, let mode = glasses?.mode { modes.keeper.glassesObserved(mode) }
@@ -185,12 +185,12 @@ final class AppController: NSObject, NSApplicationDelegate {
                 window.orderFrontRegardless()
                 NSApp.activate(ignoringOtherApps: true)
                 window.makeKey()
-                Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
+                Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(trigger.rawValue)); Esc quits")
             }
             return id
         }
-        if case .display(let id) = target, reason != "periodic check" {
-            Log.line("renderer: display \(id) not among screens (\(reason)); \(describeDisplays())")
+        if case .display(let id) = target, trigger.logsMissingDisplay {
+            Log.line("renderer: display \(id) not among screens (\(trigger.rawValue)); \(describeDisplays())")
         }
         let alreadyPreview = window.level == .normal && window.styleMask.contains(.titled)
         if !alreadyPreview {
@@ -202,7 +202,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
             }
             window.orderFrontRegardless()
-            Log.line("renderer: preview window (\(reason))")
+            Log.line("renderer: preview window (\(trigger.rawValue))")
         }
         return nil
     }
@@ -251,7 +251,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
-            placeRenderWindow(reason: "start")
+            placeRenderWindow(.start)
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 if e.charactersIgnoringModifiers == "r" { self?.recenter(); return nil }
                 // Esc always quits: the full-screen image can cover the only display. Quitting restores the mode.
@@ -359,7 +359,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         (contentWindow?.contentView as? TestPatternView)?.needsDisplay = true
         // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
         // target with no screen notification after them (e.g. a restore accepted after the display already changed).
-        placeRenderWindow(reason: "periodic check")
+        placeRenderWindow(.periodicCheck)
         updateStatus()
     }
 
@@ -454,6 +454,17 @@ final class TestPatternView: NSView {
         (text as NSString).draw(with: NSRect(x: 0, y: (bounds.height - size.height) / 2, width: bounds.width, height: size.height),
                                 options: [.usesLineFragmentOrigin], attributes: attrs)
     }
+}
+
+/// Why the image placement is being (re)computed; `rawValue` is the text logged.
+enum PlacementTrigger: String {
+    case start
+    case displaysChanged = "displays changed"
+    case sideBySideOn = "side-by-side on"
+    case periodicCheck = "periodic check"
+
+    /// The per-second check would repeat the same warning every second.
+    var logsMissingDisplay: Bool { self != .periodicCheck }
 }
 
 /// Borderless windows cannot normally become key; this one must, so Esc reaches the app while it covers the glasses.
