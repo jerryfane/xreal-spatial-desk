@@ -6,6 +6,7 @@
 #   scripts/studio-app.sh run [commit]              # 60 s against tools/fake_glasses.py; PNG snapshots
 #   scripts/studio-app.sh crash [commit]            # start, kill -9 after 8 s, check the virtual display is gone
 #   scripts/studio-app.sh term [commit]             # start, SIGTERM (as Ctrl-C/logout would) after 8 s, same check
+#   KEEP_APP=1 scripts/studio-app.sh run ...         # run the installed app without rebuilding (keeps its permission)
 #
 # Footprint agreed with the macserve owner (gitmoot 446303/446319): account jerry, ~/xreal-desk only, ad-hoc signed
 # app at the stable path ~/xreal-desk/XRealDesk.app (one Screen Recording entry), nothing installed, fake glasses
@@ -27,9 +28,9 @@ fi
 git archive --format=tar "$sha" | ssh "$studio" "mkdir -p ~/xreal-desk/$sha && tar -x -C ~/xreal-desk/$sha"
 
 set +e
-ssh "$studio" bash -s -- "$sha" "$mode" <<'REMOTE' 2>&1 | tee "$out/console.txt"
+ssh "$studio" bash -s -- "$sha" "$mode" "${KEEP_APP:-0}" <<'REMOTE' 2>&1 | tee "$out/console.txt"
 set -euo pipefail
-sha=$1 mode=$2
+sha=$1 mode=$2 keep_app=$3
 work=~/xreal-desk/$sha
 app=~/xreal-desk/XRealDesk.app
 exe=$app/Contents/MacOS/XRealDesk
@@ -46,6 +47,12 @@ trap cleanup EXIT
 displays() { system_profiler SPDisplaysDataType 2>/dev/null | awk '/^ {8}[^ ].*:$/ {sub(/^ +/, ""); sub(/:$/, ""); printf "%s; ", $0}'; }
 ours_gone() { ! system_profiler SPDisplaysDataType 2>/dev/null | grep -q 'XReal Desk:'; }
 
+# The Screen Recording grant of an ad-hoc signed app is tied to its exact code hash, so every rebuild needs a new
+# grant. KEEP_APP=1 runs the installed (already granted) app; the commit then only supplies the fake glasses.
+if [[ $keep_app == 1 ]]; then
+  [[ -x $exe ]] || { echo "KEEP_APP=1 but $app is missing"; exit 1; }
+  echo "== keeping the installed app (CFBundleVersion $(defaults read "$app/Contents/Info" CFBundleVersion))"
+else
 echo "== build $sha on $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
 swiftpm=(--package-path app --scratch-path "$work/.build" --cache-path "$work/.swiftpm/cache"
          --config-path "$work/.swiftpm/config" --security-path "$work/.swiftpm/security")
@@ -71,6 +78,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --sign - --identifier com.jerryfane.xrealdesk "$app"
+fi
 echo "== app: $app ($(codesign -dvvv "$app" 2>&1 | grep -E "^CDHash=" || true))"
 mkdir -p "$run"
 
