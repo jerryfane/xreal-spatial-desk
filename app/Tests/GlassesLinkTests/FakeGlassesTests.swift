@@ -137,9 +137,14 @@ final class FakeGlassesTests: XCTestCase {
         }
         s.lock.withLock { s.link = link }
         link.start()
-        XCTAssertEqual(s.returned.wait(timeout: .now() + 5), .success, "first handler's stop() returned")
-        XCTAssertEqual(s.returned.wait(timeout: .now() + 5), .success, "second handler's stop() returned")
+        let first = s.returned.wait(timeout: .now() + 5), second = s.returned.wait(timeout: .now() + 5)
+        XCTAssertEqual(first, .success, "first handler's stop() returned")
+        XCTAssertEqual(second, .success, "second handler's stop() returned")
         XCTAssertEqual(s.lock.withLock { s.arrived.count }, 2, "both handlers were in stop() together")
+        guard first == .success, second == .success else {
+            _ = Unmanaged.passRetained(link)  // deadlocked: stop() or deinit from here would hang too
+            return
+        }
         let t = Date()
         link.stop()  // from outside: joins the (already finishing) workers
         XCTAssertLessThan(Date().timeIntervalSince(t), 2)
