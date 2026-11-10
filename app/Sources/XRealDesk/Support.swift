@@ -111,13 +111,11 @@ func describeDisplays(virtual: CGDirectDisplayID? = nil) -> String {
     }.joined(separator: ", ")
 }
 
-/// Head tracking fed by GlassesLink threads and read by the renderer on the main thread.
+/// Glasses events → head tracking (`TrackingSession`, thread-safe) plus log lines and menu status.
+/// Fed by GlassesLink threads, read by the renderer and menu on the main thread.
 final class HeadState: @unchecked Sendable {
+    private let session = TrackingSession()
     private let lock = NSLock()
-    private var tracker: HeadTracker?
-    private var pending: [IMUSample] = []
-    private var recenterAfterNs: UInt64?
-    private(set) var calibration: FactoryCalibration?
     private var connected: Set<GlassesLink.Channel> = []
     private var lastEvent = ""
 
@@ -130,34 +128,12 @@ final class HeadState: @unchecked Sendable {
             let was = lock.withLock { connected.remove(c) != nil }
             if was { Log.line("glasses: \(c) disconnected: \(reason)") }
         case .sensor(.imu(let s)):
-            lock.withLock {
-                guard tracker != nil else {
-                    pending.append(s)
-                    if pending.count > 2000 { pending.removeFirst(pending.count - 2000) }
-                    return
-                }
-                tracker!.update(s)
-                // Recenter once, half a second after tracking starts, so the screen begins straight ahead.
-                if let after = recenterAfterNs, s.timestampNs >= after {
-                    tracker!.recenter()
-                    recenterAfterNs = nil
-                }
-            }
+            session.add(s)
         case .sensor:
             break
         case .control(.reply(let r)) where r.command == .factoryConfig:
             do {
-                let c = try FactoryCalibration(reply: r)
-                lock.withLock {
-                    calibration = c
-                    if tracker == nil {
-                        var t = HeadTracker(calibration: c.imu)
-                        pending.forEach { t.update($0) }
-                        pending = []
-                        tracker = t
-                        recenterAfterNs = t.lastTimestampNs.map { $0 + 500_000_000 }
-                    }
-                }
+                session.setCalibration(try FactoryCalibration(reply: r))
                 Log.line("glasses: factory calibration loaded (\(r.body.count) bytes)")
             } catch {
                 Log.line("glasses: factory calibration NOT decodable: \(error)")
@@ -176,22 +152,20 @@ final class HeadState: @unchecked Sendable {
         }
     }
 
-    func recenter() {
-        lock.withLock { tracker?.recenter() }
-    }
+    func recenter() { session.recenter() }
+
+    var calibration: FactoryCalibration? { session.calibration }
 
     /// Head orientation (head → world, recentered); identity until tracking starts.
-    var orientation: Quat { lock.withLock { tracker?.orientation ?? .identity } }
+    var orientation: Quat { session.orientation }
 
     var status: String {
-        lock.withLock {
-            guard let t = tracker else {
-                return connected.isEmpty ? "Glasses: not connected" : "Glasses: connected, waiting for calibration"
-            }
-            let p = t.pose
-            return String(format: "Glasses: yaw %.0f° pitch %.0f° roll %.0f°", p.yaw, p.pitch, p.roll)
-                + (lastEvent.isEmpty ? "" : " · \(lastEvent)")
+        guard let p = session.pose else {
+            return lock.withLock { connected.isEmpty } ? "Glasses: not connected" : "Glasses: connected, waiting for tracking"
         }
+        let event = lock.withLock { lastEvent }
+        return String(format: "Glasses: yaw %.0f° pitch %.0f° roll %.0f°", p.yaw, p.pitch, p.roll)
+            + (event.isEmpty ? "" : " · \(event)")
     }
 }
 #endif
