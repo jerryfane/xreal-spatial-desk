@@ -68,7 +68,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --sign - --identifier com.jerryfane.xrealdesk "$app"
-echo "== app: $app ($(codesign -dv "$app" 2>&1 | grep -E '^CDHash=' || true))"
+echo "== app: $app ($(codesign -dvvv "$app" 2>&1 | grep -E "^CDHash=" || true))"
 mkdir -p "$run"
 
 launch() {  # args for the app; returns once `open` has launched it (or, with -W, once it quit)
