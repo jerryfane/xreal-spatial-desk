@@ -93,10 +93,12 @@ asked, one setting: side-by-side input mode (below).
    `open /Applications/XRealDesk.app --args --output <ID>` fills that display with the side-by-side image.
    Until side-by-side mode is on, the glasses show the 3840×1080 image squeezed into 1920×1080, so both eyes see both
    halves.
-6. **Side-by-side 3D.** **XR** › **Side-by-side 3D on the glasses** (or start with `--args --sbs`) switches the glasses
-   to side-by-side input: they briefly blank and come back as a 3840×1080 display, then each eye sees only its own
-   half. Choosing it again, or quitting, switches them back. If the app crashes while switched, the next start
-   switches them back as soon as they connect.
+6. **Side-by-side 3D.** **XR** › **Side-by-side 3D on the glasses** (or start with `--args --sbs`) finds the glasses,
+   fills them with the app's image, then switches them to side-by-side input: they briefly blank and come back as a
+   3840×1080 display, and each eye sees only its own half. While the glasses are side-by-side the image always covers
+   all of them, so neither eye sees the desktop. **Esc** quits at any time (the image may cover your only screen).
+   Choosing the menu item again, or quitting, switches the glasses back; so does unplugging them, and the next start
+   if the app crashed.
 
 `/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, the exact mode-switch frames and replies,
 buttons, wear events and frame rates.

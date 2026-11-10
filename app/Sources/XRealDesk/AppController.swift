@@ -48,8 +48,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         createDisplay()
         startGlasses()
-        if options.sbs { setSideBySide(true) }
         startRenderer()
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.placeRenderWindow(reason: "displays changed") }
+        }
+        if options.sbs { setSideBySide(true) }
         makeStatusItem()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated { self.tick() }
@@ -138,11 +142,53 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func setSideBySide(_ on: Bool) {
         if on {
-            _ = modes.switchTo(.sideBySide, glasses: GlassesDisplay.find(excluding: display?.displayID))
+            guard let glasses = GlassesDisplay.find(excluding: display?.displayID) else {
+                Log.line("display mode: glasses display not found (\(describeDisplays())); side-by-side not switched on")
+                updateStatus()
+                return
+            }
+            // Cover the glasses with our image before they switch, so neither eye ever sees half a desktop.
+            placeRenderWindow(reason: "side-by-side on", forceGlasses: glasses)
+            _ = modes.switchTo(.sideBySide, glasses: glasses)
         } else if let mode = modes.keeper.restore() {
+            // The window stays on the glasses until they report regular mode again (placeRenderWindow on the change).
             modes.send(mode, why: "menu")
         }
         updateStatus()
+    }
+
+    /// Where the side-by-side image goes: full screen on the glasses whenever they are (or are being switched to)
+    /// side-by-side, or with --output; otherwise a half-size preview window. Re-run on every display change, because
+    /// the glasses re-appear 3840 px wide after a switch.
+    private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) {
+        guard let window = renderWindow else { return }
+        let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
+        let wantsGlasses = forceGlasses != nil || glasses?.mode == .sideBySide || sideBySideOn
+        let targetID = options.outputDisplay ?? (wantsGlasses ? glasses?.id : nil)
+        if let targetID, let screen = NSScreen.screens.first(where: { $0.displayID == targetID }) {
+            window.styleMask = [.borderless]
+            window.level = .screenSaver
+            window.setFrame(screen.frame, display: true)
+            window.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKey()
+            Log.line("renderer: full screen on display \(targetID) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
+        } else {
+            if wantsGlasses {
+                Log.line("renderer: glasses display not among screens yet (\(reason)); \(describeDisplays())")
+            }
+            let alreadyPreview = window.level == .normal && window.styleMask.contains(.titled)
+            guard !alreadyPreview else { return }
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.level = .normal
+            window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
+            window.setContentSize(NSSize(width: 1920, height: 540))
+            if let main = NSScreen.screens.first(where: { $0.displayID == CGMainDisplayID() }) {
+                window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
+            }
+            window.orderFrontRegardless()
+            Log.line("renderer: preview window (\(reason))")
+        }
     }
 
     /// Side-by-side is "on" while this run has the glasses switched away from their original mode.
@@ -169,38 +215,31 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return (Renderer.Scene(displays: displays, head: head.orientation, screen: placement, texture: frame?.texture),
                         frame?.backing)
             }
-            let window: NSWindow
-            if let id = options.outputDisplay {
-                guard let screen = NSScreen.screens.first(where: { $0.displayID == id }) else {
-                    Log.line("renderer: --output display \(id) not found; \(describeDisplays())")
-                    NSApp.terminate(nil)
-                    return
-                }
-                // Borderless and covering the whole display; the 3840×1080 drawable is scaled to the screen.
-                let view = MTKView(frame: NSRect(origin: .zero, size: screen.frame.size))
-                renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
-                window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-                window.contentView = view
-                window.level = .screenSaver
-                window.setFrame(screen.frame, display: true)
-                Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt)")
-            } else {
-                let view = MTKView(frame: NSRect(x: 0, y: 0, width: 1920, height: 540))
-                renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
-                window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable],
-                                  backing: .buffered, defer: false)
-                window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
-                window.contentView = view
-                if let main = NSScreen.screens.first(where: { $0.displayID == CGMainDisplayID() }) {
-                    window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
-                }
-            }
+            // One window; placeRenderWindow decides between full screen on the glasses and a preview window.
+            let view = MTKView(frame: NSRect(x: 0, y: 0, width: 1920, height: 540))
+            view.autoresizingMask = [.width, .height]
+            renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
+            let window = KeyableWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable],
+                                       backing: .buffered, defer: false)
+            window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
+            window.contentView = view
             window.isReleasedWhenClosed = false
+            if let main = NSScreen.screens.first(where: { $0.displayID == CGMainDisplayID() }) {
+                window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
+            }
             window.orderFrontRegardless()
             self.renderer = renderer
             renderWindow = window
+            if let id = options.outputDisplay, !NSScreen.screens.contains(where: { $0.displayID == id }) {
+                Log.line("renderer: --output display \(id) not found; \(describeDisplays())")
+                NSApp.terminate(nil)
+                return
+            }
+            placeRenderWindow(reason: "start")
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 if e.charactersIgnoringModifiers == "r" { self?.recenter(); return nil }
+                // Esc always quits: the full-screen image can cover the only display. Quitting restores the mode.
+                if e.keyCode == 53 { NSApp.terminate(nil); return nil }
                 return e
             }
         } catch {
@@ -395,6 +434,11 @@ final class TestPatternView: NSView {
         (text as NSString).draw(with: NSRect(x: 0, y: (bounds.height - size.height) / 2, width: bounds.width, height: size.height),
                                 options: [.usesLineFragmentOrigin], attributes: attrs)
     }
+}
+
+/// Borderless windows cannot normally become key; this one must, so Esc reaches the app while it covers the glasses.
+final class KeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
 }
 
 extension NSScreen {
