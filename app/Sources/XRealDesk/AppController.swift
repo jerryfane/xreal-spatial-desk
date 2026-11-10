@@ -155,9 +155,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return
             }
             _ = modes.switchTo(.sideBySide, glasses: glasses)
-        } else if let mode = modes.keeper.restore() {
+        } else if modes.keeper.restore() != nil {
             // The window stays on the glasses until they report regular mode again (placeRenderWindow on the change).
-            modes.send(mode, why: "menu")
+            modes.send(why: "menu")
         }
         updateStatus()
     }
