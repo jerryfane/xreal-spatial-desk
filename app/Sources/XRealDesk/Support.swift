@@ -16,14 +16,18 @@ struct Options {
     var probe = false
     var displayWidth = 1920
     var displayHeight = 1080
+    /// Show the side-by-side frame full screen on this display (e.g. the glasses) instead of in a window.
+    var outputDisplay: CGDirectDisplayID?
 
     static let usage = """
-    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--display WxH] [--probe]
+    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--display WxH] [--output ID] [--probe]
       --host       glasses address (default 169.254.2.1; 127.0.0.1 for tools/fake_glasses.py)
       --seconds    quit after N seconds
       --out        write log.txt and snapshot PNGs here
       --snapshots  save the rendered side-by-side frame at these seconds after launch
       --display    virtual display size in pixels (default 1920x1080)
+      --output     show the 3840×1080 side-by-side image full screen on this display ID (see the log's display
+                   list) instead of in a half-size window
       --probe      create the virtual display, list displays, remove it and quit (no capture, no permissions)
     """
 
@@ -53,6 +57,9 @@ struct Options {
                 displayWidth = parts[0]
                 displayHeight = parts[1]
             case "--probe": probe = true
+            case "--output":
+                guard let id = UInt32(try value(a)) else { throw OptionError("--output needs a display ID") }
+                outputDisplay = id
             // LaunchServices adds this when the app is started from Finder or `open`.
             case let s where s.hasPrefix("-psn_"): break
             default: throw OptionError("unknown argument \(a)")

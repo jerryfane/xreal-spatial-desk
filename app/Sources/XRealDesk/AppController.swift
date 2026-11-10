@@ -124,16 +124,33 @@ final class AppController: NSObject, NSApplicationDelegate {
             let renderer = try Renderer(device: device, head: head) { capture?.latestFrame }
             // Size the virtual screen like the display it shows (16:9 → 0.9 m × 0.506 m at 1.6 m).
             renderer.screen.height = renderer.screen.width * Double(options.displayHeight) / Double(options.displayWidth)
-            let view = MTKView(frame: NSRect(x: 0, y: 0, width: 1920, height: 540))
-            renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
-            let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable],
+            let window: NSWindow
+            if let id = options.outputDisplay {
+                guard let screen = NSScreen.screens.first(where: { $0.displayID == id }) else {
+                    Log.line("renderer: --output display \(id) not found; \(describeDisplays())")
+                    NSApp.terminate(nil)
+                    return
+                }
+                // Borderless and covering the whole display; the 3840×1080 drawable is scaled to the screen.
+                let view = MTKView(frame: NSRect(origin: .zero, size: screen.frame.size))
+                renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
+                window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.contentView = view
+                window.level = .screenSaver
+                window.setFrame(screen.frame, display: true)
+                Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt)")
+            } else {
+                let view = MTKView(frame: NSRect(x: 0, y: 0, width: 1920, height: 540))
+                renderer.attach(to: view, eyeWidth: 1920, eyeHeight: 1080)
+                window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .miniaturizable],
                                   backing: .buffered, defer: false)
-            window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
-            window.contentView = view
-            window.isReleasedWhenClosed = false
-            if let main = NSScreen.screens.first(where: { $0.displayID == CGMainDisplayID() }) {
-                window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
+                window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
+                window.contentView = view
+                if let main = NSScreen.screens.first(where: { $0.displayID == CGMainDisplayID() }) {
+                    window.setFrameTopLeftPoint(NSPoint(x: main.visibleFrame.minX + 20, y: main.visibleFrame.maxY - 20))
+                }
             }
+            window.isReleasedWhenClosed = false
             window.orderFrontRegardless()
             self.renderer = renderer
             renderWindow = window
