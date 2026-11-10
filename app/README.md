@@ -69,3 +69,38 @@ display with `--output ID` (for example the glasses' display). Black is see-thro
 - No Accessibility permission is used yet.
 - On a Mac without a monitor (such as a headless Mac Studio), the virtual display replaces the system's placeholder
   display while it exists, so the desktop and any Screen Sharing view move onto it.
+
+## Testing on a Mac with the glasses
+
+Needs macOS 14+. The glasses connect over USB-C; no driver. The app only sends the five read-only GETs.
+
+1. **Download** `XRealDesk.zip` from the repository's
+   [Releases](https://github.com/jerryfane/xreal-spatial-desk/releases) (universal: Apple Silicon and Intel) and
+   double-click it. Move `XRealDesk.app` anywhere, e.g. Applications.
+2. **First open.** The app is not notarized, so macOS blocks it the first time. Double-click it, close the warning,
+   then System Settings › Privacy & Security › scroll to "XRealDesk was blocked…" › **Open Anyway**. (Or in
+   Terminal: `xattr -dr com.apple.quarantine /Applications/XRealDesk.app`.)
+3. **Screen Recording.** On first start the app asks for it: System Settings › Privacy & Security › Screen & System
+   Audio Recording › switch on **XRealDesk**, then quit (menu bar **XR** › Quit) and open it again. The permission
+   stays until you install a different build.
+4. **Check.** The **XR** menu shows the head pose. Turn right: yaw goes up. Look up: pitch goes up. Right ear
+   down: roll goes up. **Recenter** resets yaw. A window shows the side-by-side image of the virtual display.
+   If the menu says "not connected", replug the glasses.
+5. **On the glasses.** Quit the app (**XR** › Quit): settings are read only at start, and `open` would otherwise
+   reuse the running copy. In Terminal, `open /Applications/XRealDesk.app --args --out /tmp/xreal-run`; the
+   glasses' display ID is in `/tmp/xreal-run/log.txt` ("displays before: …"). Quit again, then
+   `open /Applications/XRealDesk.app --args --output <ID>` fills that display with the side-by-side image.
+   Without side-by-side input mode (a SET command, milestone 1) the glasses show the 3840×1080 image squeezed into
+   1920×1080, so both eyes see both halves; tracking, buttons, wear events and capture can still be checked.
+
+`/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, buttons, wear events and frame rates.
+
+### Building it yourself
+
+With Xcode or the Command Line Tools (`xcode-select --install`): `scripts/build-app.sh` builds `build/XRealDesk.app`.
+For a live 10 Hz pose readout in Terminal, from the repository root:
+`swift build --package-path app -c release && app/.build/release/xreal-track live` (`r` + Enter recenters, `q` +
+Enter quits).
+
+Releases are built by CI: pushing a tag `v*` publishes `XRealDesk.zip`. Every pull request's CI run also has the
+zip as a downloadable artifact.
