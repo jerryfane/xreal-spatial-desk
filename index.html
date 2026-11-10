@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XREAL One — spatial screen preview</title>
+<style>
+:root{--bg:#0d0f12;--panel:#15181d;--panel2:#1b1f25;--line:#2a2f37;--fg:#e7e9ec;--muted:#8a93a0;--accent:#4da3ff;--warn:#ffb547;--bad:#ff6b6b;--ok:#4cd07d}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
+.app{display:grid;grid-template-columns:310px 1fr;height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:16px 14px 24px}
+h1{font-size:15px;margin:0 0 4px}
+h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px;font-weight:600}
+p{margin:0 0 8px}
+.muted{color:var(--muted)}
+.small{font-size:11.5px}
+.modes{display:flex;flex-direction:column;gap:6px}
+.mode{border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;background:var(--panel2)}
+.mode:hover{border-color:#3a414c}
+.mode.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.mode b{display:block;font-size:12.5px}
+.mode span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+.tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:9px;margin-top:5px;border:1px solid}
+.tag.n{color:var(--ok);border-color:#2f6b45}
+.tag.h{color:var(--warn);border-color:#6b5428}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{flex:1;background:transparent;color:var(--fg);border:0;padding:6px 4px;font:inherit;font-size:12px;cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:#04121f;font-weight:600}
+.row{display:flex;align-items:center;gap:8px;margin:7px 0}
+.row label{flex:0 0 92px;color:var(--muted);font-size:12px}
+.row input[type=range]{flex:1}
+.row output{flex:0 0 58px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px}
+.row select{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px}
+.check{display:flex;align-items:center;gap:7px;margin:6px 0;font-size:12.5px;cursor:pointer}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit;font-size:12px;cursor:pointer}
+.btn:hover{border-color:#3a414c}
+.btn.on{border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.4;cursor:default}
+main{display:grid;grid-template-rows:auto minmax(0,1fr) 330px;min-width:0;overflow:hidden}
+.bar{display:flex;gap:18px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap;background:var(--panel)}
+.bar .k{color:var(--muted)}
+.bar .v{font-variant-numeric:tabular-nums}
+.stage{position:relative;overflow:auto;display:flex;align-items:center;justify-content:center;background:#000;cursor:grab}
+.stage.drag{cursor:grabbing}
+.stage.one{align-items:flex-start;justify-content:flex-start}
+#view{display:block;image-rendering:auto}
+.stage.one #view{image-rendering:pixelated}
+.wrap{position:relative;flex:0 0 auto}
+#fovbox{position:absolute;border:1.5px dashed rgba(77,163,255,.9);pointer-events:none;display:none}
+#fovbox span{position:absolute;top:-20px;left:0;font-size:11px;color:var(--accent);white-space:nowrap}
+.caption{position:absolute;left:10px;bottom:8px;font-size:11.5px;color:#cfd5dc;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:5px;pointer-events:none}
+.bottom{display:grid;grid-template-columns:380px minmax(0,1fr) minmax(0,1fr);border-top:1px solid var(--line);min-height:0}
+.bottom > div{padding:10px 14px;overflow:auto;border-right:1px solid var(--line)}
+.bottom > div:last-child{border-right:0}
+#map{display:block;cursor:pointer;background:#0a0c0f;border-radius:8px;border:1px solid var(--line)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.chip{border:1px solid var(--line);border-radius:14px;padding:3px 10px;font-size:12px;cursor:pointer;background:var(--panel2);color:var(--fg)}
+.chip.on{border-color:var(--accent);color:var(--accent)}
+table.m{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+table.m td{padding:3px 0;border-bottom:1px solid #20242b;vertical-align:top}
+table.m td:first-child{color:var(--muted);width:46%}
+.good{color:var(--ok)}.meh{color:var(--warn)}.badc{color:var(--bad)}
+.note{font-size:11.5px;color:var(--muted);line-height:1.5}
+.note b{color:var(--fg);font-weight:600}
+kbd{background:#252a31;border:1px solid #333a44;border-radius:4px;padding:0 4px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <h1>XREAL One — spatial screen preview</h1>
+  <p class="muted small">Simulates your glasses at their real resolution and field of view: 1920×1080 per eye, 42° × 25° (from their factory calibration). The display is see-through and adds light on top of the room, so black pixels look transparent.</p>
+
+  <h2>Mode</h2>
+  <div class="modes" id="modes"></div>
+
+  <h2>View</h2>
+  <div class="seg" id="views">
+    <button data-v="panel">Through glasses</button>
+    <button data-v="context">Wide context</button>
+    <button data-v="cable">Cable signal</button>
+  </div>
+  <label class="check"><input type="checkbox" id="one"> 1:1 panel pixels (exact sharpness)</label>
+  <label class="check"><input type="checkbox" id="both"> Show both eyes (3840×1080)</label>
+
+  <h2>Head</h2>
+  <p class="muted small">Drag the view or use <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> / <kbd>WASD</kbd> to turn your head. The glasses track rotation only (3DoF): leaning or walking does not change the picture.</p>
+  <div class="btns">
+    <button class="btn" id="sweep">▶ Look-around demo</button>
+    <button class="btn" id="recenter">Recenter</button>
+    <button class="btn" id="resethead">Reset head</button>
+  </div>
+
+  <h2>Glasses</h2>
+  <div class="row"><label>Brightness</label><input type="range" id="bright" min="0.2" max="1" step="0.05" value="0.9"><output id="brightO"></output></div>
+  <div class="row"><label>Lens tint</label><div class="seg" id="tint" style="flex:1"><button data-t="0">Clear</button><button data-t="1">Shade</button><button data-t="2">Theatre</button></div></div>
+  <label class="check"><input type="checkbox" id="room" checked> Show room behind the lenses</label>
+
+  <h2>Mac-side tracking</h2>
+  <div class="row"><label>Latency</label><input type="range" id="lat" min="5" max="80" step="1" value="30"><output id="latO"></output></div>
+  <p class="muted small" id="latNote"></p>
+
+  <h2>Notes</h2>
+  <p class="note">Accurate: field of view and eye spacing (from your glasses' factory calibration), panel resolution, see-through blending, 3D placement, stereo. <b>Not modelled:</b> lens distortion and color fringing. The room and tint strengths are only illustrative. The ~3 ms native latency is XREAL's claim. The Mac-side latency is an estimate; adjust the slider. The size of the native 32:9 UltraWide screen is approximate.</p>
+</aside>
+
+<main>
+  <div class="bar" id="bar"></div>
+  <div class="stage" id="stage">
+    <div class="wrap" id="wrap">
+      <canvas id="view"></canvas>
+      <div id="fovbox"><span>display area (42° × 25°) — content is only visible inside this box</span></div>
+    </div>
+    <div class="caption" id="caption"></div>
+  </div>
+  <div class="bottom">
+    <div>
+      <div class="row" style="margin:0 0 6px"><b style="font-size:12.5px">Top-down map</b><span class="muted small" style="margin-left:auto">drag a screen to move it</span></div>
+      <canvas id="map"></canvas>
+    </div>
+    <div>
+      <div class="row" style="margin:0 0 6px"><b style="font-size:12.5px">Screens</b>
+        <span style="margin-left:auto" class="btns"><button class="btn" id="add">+ Add</button><button class="btn" id="del">Remove</button></span></div>
+      <div class="chips" id="chips"></div>
+      <div id="insp"></div>
+    </div>
+    <div>
+      <b style="font-size:12.5px">How placement works</b>
+      <p class="note" style="margin-top:6px">Each screen is a flat (or curved) panel at a position on a sphere around your head, set by four numbers:</p>
+      <p class="note"><b>Yaw</b> = how far left/right (°). <b>Pitch</b> = how far up/down (°). <b>Distance</b> = metres from your eyes. <b>Size</b> = diagonal in inches. The screen always faces you.</p>
+      <p class="note">Every frame, the head angle from the glasses' motion sensor is subtracted, so screens stay put while you look around. <b>Recenter</b> moves the whole layout to wherever you are currently facing.</p>
+      <p class="note"><b>Distance vs size:</b> with 3DoF, only the angle a screen covers matters. A 48″ screen at 1.5 m and a 96″ screen at 3 m look the same size, but stereo depth changes.</p>
+      <p class="note"><b>Sharpness:</b> about 43 panel pixels per degree. A screen wider than about 42° doesn't fit in view at once, and its text is drawn with fewer panel pixels. See the readouts under Screens.</p>
+      <p class="note"><b>Native vs Mac:</b> in native modes the Mac sends an ordinary flat desktop and the glasses move it (see “Cable signal”). In Mac mode the Mac draws both eye views itself, so every frame is a little late. Run the look-around demo to see the screens drift.</p>
+    </div>
+  </div>
+</main>
+</div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------- constants
+const DEG = Math.PI / 180;
+const HT = 960 / 2490.2;                                   // half-width tangent: fx from the factory calibration (k_left/right_display)
+const VT = 540 / 2464.5;                                   // half-height tangent: fy from the factory calibration
+const HFOV = 2 * Math.atan(HT) / DEG;                      // ≈ 42.2°
+const VFOV = 2 * Math.atan(VT) / DEG;                      // ≈ 24.7°
+const PPD = (960 / HT) * DEG;                              // panel px per degree at the centre ≈ 43.5
+const CTX_T = 1.0;                                         // context view: 90° horizontal
+const NATIVE_LAT = 3;                                      // ms, XREAL's claim for on-glasses anchoring
+const TINTS = [0.55, 0.22, 0.05];                          // illustrative room transmission
+const ASPECTS = { '16:9': [16, 9], '21:9': [21, 9], '32:9': [32, 9], '9:16': [9, 16] };
+const RES = {
+  '16:9': [[1920, 1080, 1], [2560, 1440, 1], [3840, 2160, 2]],
+  '21:9': [[2560, 1080, 1], [3440, 1440, 1]],
+  '32:9': [[3840, 1080, 1], [5120, 1440, 1]],
+  '9:16': [[1080, 1920, 1], [1440, 2560, 1]],
+};
+const CONTENTS = { code: 'Code editor', browser: 'Browser (light page)', terminal: 'Terminal', chat: 'Chat', video: 'Full-screen video', ultra: '3 windows side by side' };
+const MODES = {
+  anchor:   { label: 'Native · Anchor', desc: 'One screen fixed in space. The glasses do the tracking.', native: true, base: 'anchor', focus: false, multi: false },
+  follow:   { label: 'Native · Follow', desc: 'The screen trails your head and re-centres smoothly.', native: true, base: 'follow', focus: false, multi: false },
+  ultrawide:{ label: 'Native · UltraWide 32:9', desc: 'One very wide screen fixed in space; turn your head to see the sides.', native: true, base: 'anchor', focus: false, multi: false },
+  hybrid:   { label: 'Hybrid · UltraWide + look-to-focus', desc: 'Native 32:9 tracking. The Mac splits it into 3 zones and focuses the one you look at.', native: true, base: 'anchor', focus: true, multi: false },
+  host:     { label: 'Mac · multi-screen', desc: 'Independent macOS displays placed anywhere. The Mac draws both eye views.', native: false, base: 'anchor', focus: true, multi: true },
+};
+
+// ---------------------------------------------------------------- state
+const state = {
+  mode: 'host', view: 'panel', one: false, both: false,
+  bright: 0.9, tint: 0, room: true, lat: 30, ipd: 0.0644,   // eye spacing from target_p_left/right_display
+  sweep: false, sweepT0: 0, sel: 0,
+};
+const head = { yaw: 0, pitch: 0 };
+const anchor = { yaw: 0, pitch: 0 };
+const follow = { yaw: 0, pitch: 0 };
+let screens = [];
+let uid = 0;
+
+// ---------------------------------------------------------------- math (column-major 4×4)
+const M = {
+  id() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
+  mul(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+      let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s;
+    }
+    return o;
+  },
+  rx(t) { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); },
+  ry(t) { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); },
+  tr(x, y, z) { const m = M.id(); m[12] = x; m[13] = y; m[14] = z; return m; },
+  persp(tx, ty, n, f) { return new Float32Array([1/tx,0,0,0, 0,1/ty,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]); },
+  apply(m, p) { const [x, y, z] = p; return [m[0]*x+m[4]*y+m[8]*z+m[12], m[1]*x+m[5]*y+m[9]*z+m[13], m[2]*x+m[6]*y+m[10]*z+m[14]]; },
+};
+const dir = (yaw, pitch) => [Math.sin(yaw*DEG)*Math.cos(pitch*DEG), Math.sin(pitch*DEG), -Math.cos(yaw*DEG)*Math.cos(pitch*DEG)];
+// +yaw = right, +pitch = up, eye at origin looking down -Z
+const viewMat = (pose, eyeX) => M.mul(M.tr(-eyeX, 0, 0), M.mul(M.rx(-pose.pitch * DEG), M.ry(pose.yaw * DEG)));
+const modelMat = (s, base) => M.mul(M.ry(-(s.yaw + base.yaw) * DEG), M.mul(M.rx((s.pitch + base.pitch) * DEG), M.tr(0, 0, -s.dist)));
+
+// ---------------------------------------------------------------- screens
+function mkScreen(o) {
+  return Object.assign({ id: ++uid, name: 'Screen', yaw: 0, pitch: 0, dist: 1.5, diag: 40, aspect: '16:9', resIdx: 0, curveR: 0, content: 'code', zones: 1, tex: null, texKey: '', mesh: null }, o);
+}
+function dims(s) { const [aw, ah] = ASPECTS[s.aspect]; const d = s.diag * 0.0254, k = Math.hypot(aw, ah); return { w: d * aw / k, h: d * ah / k }; }
+const resOf = s => RES[s.aspect][s.resIdx];
+const diagFor = (w, h) => Math.hypot(w, h) / 0.0254;
+function localPoint(s, x, y) {
+  if (!s.curveR) return [x, y, 0];
+  const a = x / s.curveR; return [s.curveR * Math.sin(a), y, s.curveR * (1 - Math.cos(a))];
+}
+function presetScreens(mode) {
+  const ang = 0.95 * HFOV * DEG, d = 4, w = 2 * d * Math.tan(ang / 2), h = w * 9 / 16;   // native default: 4 m, 95% of FOV
+  switch (mode) {
+    case 'anchor': return [mkScreen({ name: 'Mac display', dist: d, diag: diagFor(w, h), content: 'code' })];
+    case 'follow': return [mkScreen({ name: 'Mac display', dist: d, diag: diagFor(w, h), content: 'browser' })];
+    case 'ultrawide': return [mkScreen({ name: 'UltraWide display', dist: d, diag: diagFor(h * 32 / 9, h), aspect: '32:9', content: 'ultra' })];
+    case 'hybrid': return [mkScreen({ name: 'UltraWide display', dist: d, diag: diagFor(h * 32 / 9, h), aspect: '32:9', content: 'ultra', zones: 3 })];
+    case 'host': return [
+      mkScreen({ name: 'Center · editor', dist: 1.5, diag: 48, content: 'code' }),
+      mkScreen({ name: 'Left · browser', yaw: -44, dist: 1.5, diag: 40, content: 'browser' }),
+      mkScreen({ name: 'Right · terminal', yaw: 44, dist: 1.5, diag: 40, content: 'terminal' }),
+      mkScreen({ name: 'Above · chat', pitch: 28, dist: 1.6, diag: 34, content: 'chat' }),
+    ];
+  }
+}
+
+// ---------------------------------------------------------------- content painting (fake macOS desktops)
+const SANS = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
+const MONO = 'Menlo, "SF Mono", Monaco, Consolas, monospace';
+function rr(g, x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); }
+function wrap(g, text, x, y, maxW, lh, maxY) {
+  const words = text.split(' '); let line = '';
+  for (const wd of words) {
+    const t = line ? line + ' ' + wd : wd;
+    if (g.measureText(t).width > maxW && line) { g.fillText(line, x, y); y += lh; line = wd; if (y > maxY) return y; }
+    else line = t;
+  }
+  if (line) { g.fillText(line, x, y); y += lh; }
+  return y;
+}
+function wallpaper(g, W, H) {
+  const gr = g.createLinearGradient(0, 0, W, H);
+  gr.addColorStop(0, '#0a0e1c'); gr.addColorStop(.55, '#151034'); gr.addColorStop(1, '#2a0f2e');
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  const r = g.createRadialGradient(W * .75, H * .2, 0, W * .75, H * .2, Math.max(W, H) * .6);
+  r.addColorStop(0, 'rgba(90,70,200,.35)'); r.addColorStop(1, 'rgba(90,70,200,0)');
+  g.fillStyle = r; g.fillRect(0, 0, W, H);
+}
+function menuBar(g, W, k, app) {
+  const h = 24 * k;
+  g.fillStyle = 'rgba(28,28,34,.92)'; g.fillRect(0, 0, W, h);
+  g.fillStyle = '#f2f2f5'; g.textBaseline = 'middle';
+  g.font = `600 ${14 * k}px ${SANS}`; g.fillText('\uF8FF', 14 * k, h / 2);
+  g.font = `700 ${13 * k}px ${SANS}`; g.fillText(app, 40 * k, h / 2);
+  let x = 40 * k + g.measureText(app).width + 20 * k;
+  g.font = `${13 * k}px ${SANS}`;
+  for (const m of ['File', 'Edit', 'View', 'Go', 'Window', 'Help']) { g.fillText(m, x, h / 2); x += g.measureText(m).width + 18 * k; }
+  const clock = 'Mon 9 Nov  14:32';
+  g.textAlign = 'right'; g.fillText(clock, W - 14 * k, h / 2);
+  g.fillText('100%  ▮    ◔', W - 14 * k - g.measureText(clock).width - 16 * k, h / 2);
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  return h;
+}
+function dock(g, W, H, k) {
+  const n = 10, s = 46 * k, gap = 8 * k, pw = n * s + (n + 1) * gap, ph = s + 2 * gap;
+  const x0 = (W - pw) / 2, y0 = H - ph - 6 * k;
+  g.fillStyle = 'rgba(60,60,72,.55)'; rr(g, x0, y0, pw, ph, 16 * k); g.fill();
+  const cols = [['#3d8bfd','#1554c0'],['#ff9f43','#e8590c'],['#2ecc71','#138a48'],['#a55eea','#6c2bd9'],['#f8f9fa','#ced4da'],['#1e1e1e','#000'],['#ff6b6b','#c92a2a'],['#22b8cf','#0b7285'],['#ffd43b','#f59f00'],['#868e96','#495057']];
+  cols.forEach((c, i) => {
+    const x = x0 + gap + i * (s + gap), y = y0 + gap, gr = g.createLinearGradient(0, y, 0, y + s);
+    gr.addColorStop(0, c[0]); gr.addColorStop(1, c[1]); g.fillStyle = gr; rr(g, x, y, s, s, 11 * k); g.fill();
+  });
+}
+function windowFrame(g, x, y, w, h, k, title, light) {
+  g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 30 * k; g.shadowOffsetY = 10 * k;
+  g.fillStyle = light ? '#ffffff' : '#1e1f24'; rr(g, x, y, w, h, 10 * k); g.fill(); g.restore();
+  const tb = 30 * k;
+  g.save(); rr(g, x, y, w, h, 10 * k); g.clip();
+  g.fillStyle = light ? '#ececee' : '#2b2c33'; g.fillRect(x, y, w, tb);
+  g.fillStyle = light ? '#d6d6da' : '#3a3b44'; g.fillRect(x, y + tb - 1, w, 1);
+  g.restore();
+  ['#ff5f57', '#febc2e', '#28c840'].forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.arc(x + (16 + i * 20) * k, y + tb / 2, 6 * k, 0, 7); g.fill(); });
+  g.fillStyle = light ? '#4a4a50' : '#c9cbd1'; g.font = `600 ${13 * k}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(title, x + w / 2, y + tb / 2); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  return { x, y: y + tb, w, h: h - tb };
+}
+const CODE = `import socket, struct, time
+from dataclasses import dataclass
+
+HOST, PORT = "169.254.2.1", 52999      # XREAL One control channel
+CMD_FIRMWARE = 0x271D
+CMD_DSP = 0x272D
+
+@dataclass
+class Screen:
+    name: str
+    yaw: float = 0.0        # degrees, + = right
+    pitch: float = 0.0      # degrees, + = up
+    distance: float = 1.5   # metres from the eyes
+    diagonal: float = 40    # inches
+
+LAYOUT = [
+    Screen("editor", yaw=0, distance=1.5, diagonal=48),
+    Screen("browser", yaw=-44, distance=1.5),
+    Screen("terminal", yaw=44, distance=1.5),
+    Screen("chat", pitch=28, distance=1.6, diagonal=34),
+]
+
+def recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise EOFError("glasses closed the socket")
+        buf += chunk
+    return buf
+
+def read_frame(sock):
+    magic, length = struct.unpack(">HI", recv_exact(sock, 6))
+    return magic, recv_exact(sock, length)
+
+def get(sock, cmd, txid):
+    body = b"\\x18\\x00"                       # protobuf-style GET
+    head = struct.pack(">HII", cmd, len(body) + 4, 0x80000000 | txid)
+    sock.sendall(head + body)
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        magic, payload = read_frame(sock)
+        if magic == cmd:
+            return payload[4:]
+    raise TimeoutError(hex(cmd))
+
+def focused_screen(head_yaw, head_pitch):
+    """Pick the screen closest to where the head points."""
+    def angle(s):
+        return abs(s.yaw - head_yaw) + abs(s.pitch - head_pitch)
+    return min(LAYOUT, key=angle)
+
+if __name__ == "__main__":
+    with socket.create_connection((HOST, PORT), timeout=3) as s:
+        fw = get(s, CMD_FIRMWARE, 1)[4:].decode()
+        print("firmware", fw)            # 1.3.1.20250304103456`;
+function codeWindow(g, r, k) {
+  const c = windowFrame(g, r.x, r.y, r.w, r.h, k, 'xreal_layout.py — spatial-desk', false);
+  const sb = Math.min(230 * k, r.w * .22);
+  g.fillStyle = '#18191d'; g.fillRect(c.x, c.y, sb, c.h);
+  g.font = `600 ${11 * k}px ${SANS}`; g.fillStyle = '#7d828c'; g.fillText('EXPLORER', c.x + 14 * k, c.y + 24 * k);
+  g.font = `${13 * k}px ${SANS}`;
+  ['▾ spatial-desk', '   xreal_layout.py', '   imu_stream.py', '   focus_daemon.py', '   compositor.swift', '   README.md', '▸ tests'].forEach((t, i) => {
+    if (i === 1) { g.fillStyle = '#2c3140'; g.fillRect(c.x, c.y + (38 + i * 22) * k, sb, 22 * k); }
+    g.fillStyle = i === 1 ? '#e6e6e6' : '#b5b9c1'; g.fillText(t, c.x + 14 * k, c.y + (54 + i * 22) * k);
+  });
+  const tabH = 34 * k; g.fillStyle = '#25262c'; g.fillRect(c.x + sb, c.y, c.w - sb, tabH);
+  g.fillStyle = '#1e1f24'; g.fillRect(c.x + sb, c.y, 170 * k, tabH);
+  g.fillStyle = '#e6e6e6'; g.font = `${12.5 * k}px ${SANS}`; g.fillText('xreal_layout.py', c.x + sb + 16 * k, c.y + 22 * k);
+  const ex = c.x + sb, ey = c.y + tabH + 10 * k, lh = 19 * k, fs = 13 * k;
+  g.font = `${fs}px ${MONO}`;
+  const re = /(#.*$)|("(?:[^"\\]|\\.)*")|\b(import|from|def|return|while|if|not|raise|with|as|for|in|class|True|False|None|and|or|lambda)\b|\b(0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b|(@\w+)|\b([A-Za-z_]\w*)(?=\()/g;
+  const lines = CODE.split('\n'); const maxY = c.y + c.h - 26 * k;
+  g.save(); g.beginPath(); g.rect(ex, c.y + tabH, c.w - sb, c.h - tabH); g.clip();
+  lines.forEach((ln, i) => {
+    const y = ey + (i + 1) * lh; if (y > maxY) return;
+    if (i === 46) { g.fillStyle = '#2a2d36'; g.fillRect(ex, y - lh + 5 * k, c.w - sb, lh); }
+    g.fillStyle = '#4b5263'; g.textAlign = 'right'; g.fillText(String(i + 1), ex + 44 * k, y); g.textAlign = 'left';
+    let x = ex + 60 * k, last = 0, m; re.lastIndex = 0;
+    const put = (t, col) => { g.fillStyle = col; g.fillText(t, x, y); x += g.measureText(t).width; };
+    while ((m = re.exec(ln))) {
+      if (m.index > last) put(ln.slice(last, m.index), '#abb2bf');
+      put(m[0], m[1] ? '#7f848e' : m[2] ? '#98c379' : m[3] ? '#c678dd' : m[4] ? '#d19a66' : m[5] ? '#e5c07b' : '#61afef');
+      last = m.index + m[0].length;
+    }
+    if (last < ln.length) put(ln.slice(last), '#abb2bf');
+  });
+  g.restore();
+  g.fillStyle = '#007acc'; g.fillRect(c.x, c.y + c.h - 22 * k, c.w, 22 * k);
+  g.fillStyle = '#fff'; g.font = `${12 * k}px ${SANS}`; g.fillText('⎇ main    Python 3.12    Ln 47, Col 9    UTF-8', c.x + 12 * k, c.y + c.h - 7 * k);
+}
+function browserWindow(g, r, k) {
+  const c = windowFrame(g, r.x, r.y, r.w, r.h, k, 'Spatial desk — layout notes', true);
+  const tb = 40 * k; g.fillStyle = '#f5f5f7'; g.fillRect(c.x, c.y, c.w, tb);
+  g.fillStyle = '#e3e3e8'; rr(g, c.x + c.w * .2, c.y + 7 * k, c.w * .6, tb - 14 * k, 8 * k); g.fill();
+  g.fillStyle = '#55555d'; g.font = `${13 * k}px ${SANS}`; g.textAlign = 'center';
+  g.fillText('🔒 localhost:5173/notes/layout', c.x + c.w / 2, c.y + tb / 2 + 4.5 * k); g.textAlign = 'left';
+  const px = c.x + Math.max(36 * k, c.w * .08), pw = c.w - 2 * (px - c.x), maxY = c.y + c.h - 20 * k;
+  let y = c.y + tb + 46 * k;
+  g.fillStyle = '#111'; g.font = `700 ${30 * k}px ${SANS}`; g.fillText('Placing screens in space', px, y); y += 18 * k;
+  g.fillStyle = '#6b6b73'; g.font = `${13 * k}px ${SANS}`; g.fillText('Notes · updated today', px, y += 8 * k); y += 26 * k;
+  g.fillStyle = '#222'; g.font = `${16 * k}px ${SANS}`;
+  const paras = [
+    'Every virtual screen lives on a sphere around your head. Yaw moves it left or right, pitch moves it up or down, distance pushes it away, and the diagonal sets its physical size. The renderer subtracts the current head rotation each frame so that the screens stay put while you look around.',
+    'Only the visual angle matters for how big a screen looks: a 48-inch screen at 1.5 metres covers the same 39 degrees as a 96-inch screen at 3 metres. Keep your main screen under about 42 degrees wide so it fits entirely inside the display without turning your head.',
+  ];
+  for (const p of paras) { y = wrap(g, p, px, y, pw, 25 * k, maxY) + 12 * k; if (y > maxY) return; }
+  g.fillStyle = '#111'; g.font = `700 ${20 * k}px ${SANS}`; g.fillText('Text size checklist', px, y += 10 * k); y += 30 * k;
+  g.font = `${16 * k}px ${SANS}`; g.fillStyle = '#222';
+  for (const t of ['• 13 px body text needs roughly 10 panel pixels to stay comfortable.', '• Dark themes look best: black is transparent on see-through optics.', '• Bright white pages glow and hide the room behind them.', '• Use the 1:1 pixel view to judge real sharpness.']) {
+    y = wrap(g, t, px, y, pw, 25 * k, maxY); if (y > maxY) return;
+  }
+  y += 14 * k;
+  if (y + 120 * k < maxY) {
+    const gr = g.createLinearGradient(px, y, px + pw, y + 120 * k); gr.addColorStop(0, '#5b8def'); gr.addColorStop(1, '#a66cff');
+    g.fillStyle = gr; rr(g, px, y, pw, Math.min(160 * k, maxY - y), 12 * k); g.fill();
+    g.fillStyle = '#fff'; g.font = `600 ${18 * k}px ${SANS}`; g.fillText('Figure 1 — layout sketch', px + 20 * k, y + 34 * k);
+  }
+}
+function terminalWindow(g, r, k) {
+  const c = windowFrame(g, r.x, r.y, r.w, r.h, k, 'jerry — zsh — 120×40', false);
+  g.fillStyle = '#0c0d10'; g.fillRect(c.x, c.y, c.w, c.h);
+  const lines = [
+    ['$ ', 'system_profiler SPUSBHostDataType | grep -A8 "XREAL One"'], ['', '        XREAL One:'], ['', '          Manufacturer: XREAL'],
+    ['', '          USB Vendor ID: 0x3318'], ['', '          USB Product ID: 0x0438'], ['', ''],
+    ['$ ', 'ifconfig en8 | grep "inet "'], ['', '\tinet 169.254.2.10 netmask 0xffffff00 broadcast 169.254.2.255'], ['', ''],
+    ['$ ', 'for p in 52997 52998 52999; do nc -z 169.254.2.1 $p; done'], ['', 'Connection to 169.254.2.1 port 52997 [tcp] succeeded!'],
+    ['', 'Connection to 169.254.2.1 port 52998 [tcp] succeeded!'], ['', 'Connection to 169.254.2.1 port 52999 [tcp] succeeded!'], ['', ''],
+    ['$ ', 'python3 xreal_layout.py'], ['', 'firmware 1.3.1.20250304103456'], ['', 'dsp      15.A.00.069_20241211'], ['', ''],
+    ['$ ', 'python3 focus_daemon.py --layout desk'], ['', '[focus] head yaw  -2.1°  → editor'], ['', '[focus] head yaw -41.7°  → browser'],
+    ['', '[focus] head yaw  43.0°  → terminal'], ['', '[focus] head pitch 27.5° → chat'], ['$ ', '█'],
+  ];
+  const lh = 19 * k; g.font = `${13 * k}px ${MONO}`;
+  g.save(); g.beginPath(); g.rect(c.x, c.y, c.w, c.h); g.clip();
+  lines.forEach(([p, t], i) => {
+    const y = c.y + 22 * k + i * lh; let x = c.x + 12 * k;
+    if (p) { g.fillStyle = '#4cd07d'; g.fillText(p, x, y); x += g.measureText(p).width; }
+    g.fillStyle = p ? '#e7e9ec' : (t.includes('succeeded') ? '#8fd1ff' : '#b8bec7'); g.fillText(t, x, y);
+  });
+  g.restore();
+}
+function chatWindow(g, r, k) {
+  const c = windowFrame(g, r.x, r.y, r.w, r.h, k, 'Chat — #xreal-hacking', false);
+  const sb = Math.min(210 * k, c.w * .28); g.fillStyle = '#19171d'; g.fillRect(c.x, c.y, sb, c.h);
+  g.font = `700 ${15 * k}px ${SANS}`; g.fillStyle = '#fff'; g.fillText('Workshop', c.x + 14 * k, c.y + 28 * k);
+  g.font = `${13.5 * k}px ${SANS}`;
+  ['# general', '# xreal-hacking', '# hardware', '# random'].forEach((t, i) => {
+    if (i === 1) { g.fillStyle = '#1164a3'; g.fillRect(c.x + 6 * k, c.y + (44 + i * 26) * k, sb - 12 * k, 24 * k); }
+    g.fillStyle = i === 1 ? '#fff' : '#b7b2bd'; g.fillText(t, c.x + 16 * k, c.y + (61 + i * 26) * k);
+  });
+  const msgs = [
+    ['Jerry', '#4da3ff', 'firmware is ancient (1.3.1) — updating to 1.9.2 tonight'],
+    ['Jerry', '#4da3ff', 'IMU stream on :52998 works, ~1000 Hz'],
+    ['Bot', '#4cd07d', 'focus_daemon: editor ← 61% of the time today'],
+    ['Jerry', '#4da3ff', 'chat lives above the editor now, look up to read it'],
+  ];
+  let y = c.y + 34 * k; const x = c.x + sb + 18 * k, maxW = c.w - sb - 80 * k;
+  for (const [n, col, t] of msgs) {
+    g.fillStyle = col; rr(g, x, y - 14 * k, 34 * k, 34 * k, 7 * k); g.fill();
+    g.fillStyle = '#fff'; g.font = `700 ${14 * k}px ${SANS}`; g.fillText(n, x + 46 * k, y);
+    g.fillStyle = '#8a8590'; g.font = `${11.5 * k}px ${SANS}`; g.fillText('14:2' + (msgs.indexOf(msgs.find(m => m[2] === t))) , x + 52 * k + g.measureText(n).width * 1.15, y);
+    g.fillStyle = '#d6d2db'; g.font = `${14.5 * k}px ${SANS}`; y = wrap(g, t, x + 46 * k, y + 21 * k, maxW, 20 * k, c.y + c.h) + 16 * k;
+    if (y > c.y + c.h - 60 * k) break;
+  }
+  g.strokeStyle = '#4a4650'; g.lineWidth = 1.5 * k; rr(g, c.x + sb + 14 * k, c.y + c.h - 52 * k, c.w - sb - 28 * k, 38 * k, 8 * k); g.stroke();
+  g.fillStyle = '#7d7883'; g.font = `${14 * k}px ${SANS}`; g.fillText('Message #xreal-hacking', c.x + sb + 28 * k, c.y + c.h - 27 * k);
+}
+function videoFull(g, W, H, k) {
+  const sky = g.createLinearGradient(0, 0, 0, H * .7); sky.addColorStop(0, '#0b1d4a'); sky.addColorStop(.6, '#e8794a'); sky.addColorStop(1, '#ffd28a');
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff3c4'; g.beginPath(); g.arc(W * .62, H * .6, H * .07, 0, 7); g.fill();
+  const hills = [['#3b1f3a', .62, .1], ['#24142b', .7, .08], ['#120a18', .8, .06]];
+  for (const [col, base, amp] of hills) {
+    g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
+    for (let x = 0; x <= W; x += W / 60) g.lineTo(x, H * base - Math.sin(x / W * 9 + base * 20) * H * amp - Math.sin(x / W * 23) * H * amp * .3);
+    g.lineTo(W, H); g.fill();
+  }
+  g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, H - 70 * k, W, 70 * k);
+  g.fillStyle = 'rgba(255,255,255,.3)'; g.fillRect(40 * k, H - 50 * k, W - 80 * k, 4 * k);
+  g.fillStyle = '#fff'; g.fillRect(40 * k, H - 50 * k, (W - 80 * k) * .37, 4 * k);
+  g.font = `${15 * k}px ${SANS}`; g.fillText('▶  41:07 / 1:52:30', 40 * k, H - 20 * k);
+}
+function paintContent(s) {
+  const [W, H, k] = resOf(s);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  if (s.content === 'video') { videoFull(g, W, H, k); return c; }
+  wallpaper(g, W, H);
+  const app = { code: 'Code', browser: 'Safari', terminal: 'Terminal', chat: 'Chat', ultra: 'Code' }[s.content];
+  const mb = menuBar(g, W, k, app);
+  const pad = 28 * k, dockH = 74 * k;
+  const area = { x: pad, y: mb + pad * .7, w: W - 2 * pad, h: H - mb - pad * .7 - dockH - 10 * k };
+  const draw = { code: codeWindow, browser: browserWindow, terminal: terminalWindow, chat: chatWindow };
+  if (s.content === 'ultra') {
+    const n = 3, zw = W / n, kinds = ['browser', 'code', 'terminal'];
+    kinds.forEach((kd, i) => draw[kd](g, { x: i * zw + pad, y: area.y, w: zw - 2 * pad, h: area.h }, k));
+  } else draw[s.content](g, area, k);
+  dock(g, W, H, k);
+  return c;
+}
+function paintRoom() {
+  const W = 4096, H = 2048, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const X = yaw => (0.5 + yaw / 360) * W, Y = y => (1 - (y + 3) / 6) * H;
+  const rect = (ya, yb, y0, y1, f) => { g.fillStyle = f; g.fillRect(X(ya), Y(y1), X(yb) - X(ya), Y(y0) - Y(y1)); };
+  rect(-180, 180, 1.4, 3, '#9a968f');
+  const wall = g.createLinearGradient(0, Y(1.4), 0, Y(-1.2)); wall.addColorStop(0, '#b3aa9d'); wall.addColorStop(1, '#857b6e');
+  rect(-180, 180, -1.2, 1.4, wall);
+  rect(-180, 180, -3, -1.2, '#5c4433');
+  g.strokeStyle = 'rgba(0,0,0,.18)'; g.lineWidth = 3;
+  for (let i = 0; i < 14; i++) { const y = Y(-1.2 - i * 0.14); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  rect(-180, 180, -1.2, -1.1, '#e6dfd5');
+  // window
+  const sky = g.createLinearGradient(0, Y(1.05), 0, Y(-0.25)); sky.addColorStop(0, '#9fcfff'); sky.addColorStop(1, '#fff4dc');
+  rect(-80, -36, -0.3, 1.1, '#f1ece4'); rect(-78, -38, -0.25, 1.05, sky);
+  rect(-58.6, -57.4, -0.25, 1.05, '#f1ece4'); rect(-78, -38, 0.38, 0.44, '#f1ece4');
+  g.fillStyle = 'rgba(70,110,60,.6)'; g.fillRect(X(-78), Y(-0.05), X(-38) - X(-78), Y(-0.25) - Y(-0.05));
+  // bookshelf
+  rect(38, 72, -1.2, 0.95, '#4a3426');
+  const bookCols = ['#c0392b', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#ecf0f1', '#d35400', '#16a085'];
+  for (let s = 0; s < 4; s++) {
+    const y0 = -1.1 + s * 0.52; rect(39, 71, y0, y0 + 0.04, '#2e2018');
+    let yaw = 40; let i = s * 3;
+    while (yaw < 69) { const w = 0.9 + ((i * 7) % 5) * 0.35, hgt = 0.3 + ((i * 3) % 4) * 0.04; rect(yaw, yaw + w, y0 + 0.04, y0 + 0.04 + hgt, bookCols[i % bookCols.length]); yaw += w + 0.15; i++; }
+  }
+  // door
+  rect(122, 148, -1.2, 0.9, '#d4ccc0'); rect(123, 147, -1.2, 0.86, '#c6bdb0');
+  g.fillStyle = '#8c8c8c'; g.beginPath(); g.arc(X(144), Y(-0.15), 9, 0, 7); g.fill();
+  // framed picture
+  rect(-16, 16, 0.3, 1.05, '#2b2b2b');
+  const art = g.createLinearGradient(X(-15), 0, X(15), 0); art.addColorStop(0, '#1d3557'); art.addColorStop(.5, '#e76f51'); art.addColorStop(1, '#2a9d8f');
+  rect(-15, 15, 0.34, 1.01, art);
+  // plant + lamp
+  rect(86, 92, -1.2, -0.75, '#7a5a3a');
+  g.fillStyle = '#3f7d3a'; for (let i = 0; i < 9; i++) { g.beginPath(); g.ellipse(X(89 + Math.sin(i) * 3), Y(-0.55 + (i % 3) * 0.12), 40, 70, i, 0, 7); g.fill(); }
+  rect(-104, -103, -1.2, 0.6, '#333'); g.fillStyle = '#ffe9b0'; g.beginPath(); g.moveTo(X(-108), Y(0.6)); g.lineTo(X(-99), Y(0.6)); g.lineTo(X(-101), Y(0.95)); g.lineTo(X(-106), Y(0.95)); g.fill();
+  // desk + MacBook (close, low in the view)
+  const desk = g.createLinearGradient(0, Y(-2.15), 0, Y(-3)); desk.addColorStop(0, '#6e5642'); desk.addColorStop(1, '#4c3a2c');
+  rect(-80, 80, -3, -2.15, desk); rect(-80, 80, -2.17, -2.12, '#8a6f57');
+  g.fillStyle = '#2a2b2f'; g.beginPath(); g.moveTo(X(-17), Y(-2.15)); g.lineTo(X(17), Y(-2.15)); g.lineTo(X(15), Y(-1.12)); g.lineTo(X(-15), Y(-1.12)); g.fill();
+  const lcd = g.createLinearGradient(0, Y(-1.18), 0, Y(-2.1)); lcd.addColorStop(0, '#2b3e66'); lcd.addColorStop(1, '#1a2238');
+  g.fillStyle = lcd; g.beginPath(); g.moveTo(X(-16), Y(-2.1)); g.lineTo(X(16), Y(-2.1)); g.lineTo(X(14.2), Y(-1.18)); g.lineTo(X(-14.2), Y(-1.18)); g.fill();
+  rect(-19, 19, -2.6, -2.15, '#b9bcc2'); rect(-17, 17, -2.55, -2.2, '#2f3034');
+  return c;
+}
+
+// ---------------------------------------------------------------- WebGL
+const canvas = document.getElementById('view');
+const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+if (!gl) document.body.innerHTML = '<p style="padding:20px">WebGL2 is required.</p>';
+const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+function shader(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, `#version 300 es
+in vec3 aPos; in vec2 aUV; uniform mat4 uMVP; out vec2 vUV;
+void main(){ vUV = aUV; gl_Position = uMVP * vec4(aPos, 1.0); }`));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uTex; uniform float uGain; uniform float uFocus; uniform vec2 uZone; uniform vec2 uEdge; out vec4 o;
+void main(){
+  vec3 c = texture(uTex, vUV).rgb;
+  if (uFocus > 0.5 && vUV.x >= uZone.x && vUV.x <= uZone.y) {
+    float dx = min(vUV.x - uZone.x, uZone.y - vUV.x), dy = min(vUV.y, 1.0 - vUV.y);
+    if (dx < uEdge.x || dy < uEdge.y) c = vec3(0.30, 0.64, 1.0);
+  }
+  o = vec4(c * uGain, 1.0);
+}`));
+gl.bindAttribLocation(prog, 0, 'aPos'); gl.bindAttribLocation(prog, 1, 'aUV');
+gl.linkProgram(prog); if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const U = {}; for (const n of ['uMVP', 'uTex', 'uGain', 'uFocus', 'uZone', 'uEdge']) U[n] = gl.getUniformLocation(prog, n);
+gl.uniform1i(U.uTex, 0);
+
+function makeMesh(verts, idx) {
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao, vb, ib, n: idx.length };
+}
+function freeMesh(m) { if (!m) return; gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vb); gl.deleteBuffer(m.ib); }
+function strip(cols, f) {   // grid of (cols+1)×2 vertices; f(i) → [[x,y,z,u,v] top, bottom]
+  const v = [], idx = [];
+  for (let i = 0; i <= cols; i++) { const [a, b] = f(i); v.push(...a, ...b); }
+  for (let i = 0; i < cols; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  return makeMesh(v, idx);
+}
+function screenMesh(s) {
+  const { w, h } = dims(s), cols = s.curveR ? 64 : 1;
+  return strip(cols, i => { const u = i / cols, x = (u - .5) * w; const p0 = localPoint(s, x, h / 2), p1 = localPoint(s, x, -h / 2); return [[...p0, u, 0], [...p1, u, 1]]; });
+}
+const roomMesh = strip(180, i => { const u = i / 180, a = (u - .5) * 2 * Math.PI, r = 3; return [[r * Math.sin(a), 3, -r * Math.cos(a), u, 0], [r * Math.sin(a), -3, -r * Math.cos(a), u, 1]]; });
+const quadMesh = makeMesh([-1, 1, 0, 0, 0, 1, 1, 0, 1, 0, -1, -1, 0, 0, 1, 1, -1, 0, 1, 1], [0, 2, 1, 2, 3, 1]);
+function texFrom(src) {
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+  return t;
+}
+const roomTex = texFrom(paintRoom());
+const texCache = new Map();
+function ensure(s) {
+  const key = `${s.content}|${s.aspect}|${s.resIdx}`;
+  if (s.texKey !== key) {
+    if (!texCache.has(key)) texCache.set(key, texFrom(paintContent(s)));
+    s.tex = texCache.get(key); s.texKey = key;
+  }
+  if (!s.mesh) s.mesh = screenMesh(s);
+}
+function rebuild(s) { freeMesh(s.mesh); s.mesh = null; }
+
+// ---------------------------------------------------------------- head pose history (for latency)
+const hist = [];
+function poseAt(t) {
+  if (!hist.length) return { ...head };
+  if (t <= hist[0].t) return hist[0];
+  for (let i = hist.length - 1; i > 0; i--) {
+    const a = hist[i - 1], b = hist[i];
+    if (a.t <= t) { const f = Math.min(1, (t - a.t) / ((b.t - a.t) || 1)); return { yaw: a.yaw + (b.yaw - a.yaw) * f, pitch: a.pitch + (b.pitch - a.pitch) * f }; }
+  }
+  return hist[hist.length - 1];
+}
+
+// ---------------------------------------------------------------- rendering
+function baseFor() { return MODES[state.mode].base === 'follow' ? follow : anchor; }
+function computeFocus(base) {
+  if (!MODES[state.mode].focus) return null;
+  const f = dir(head.yaw, head.pitch); let best = null;
+  screens.forEach((s, si) => {
+    const m = modelMat(s, base), { w } = dims(s);
+    for (let z = 0; z < s.zones; z++) {
+      const p = M.apply(m, localPoint(s, ((z + .5) / s.zones - .5) * w, 0)), L = Math.hypot(...p);
+      const cos = (p[0] * f[0] + p[1] * f[1] + p[2] * f[2]) / L;
+      if (!best || cos > best.cos) best = { si, z, n: s.zones, cos };
+    }
+  });
+  return best;
+}
+function drawScreens(P, V, base, focus, gain) {
+  const order = screens.map((s, i) => [s, i]).sort((a, b) => a[0].dist - b[0].dist);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  for (const [s, i] of order) {
+    ensure(s);
+    gl.uniformMatrix4fv(U.uMVP, false, M.mul(P, M.mul(V, modelMat(s, base))));
+    gl.uniform1f(U.uGain, gain);
+    const on = focus && focus.si === i;
+    gl.uniform1f(U.uFocus, on ? 1 : 0);
+    if (on) { const [rw, rh] = resOf(s); gl.uniform2f(U.uZone, focus.z / focus.n, (focus.z + 1) / focus.n); gl.uniform2f(U.uEdge, 6 / rw, 6 / rh); }
+    gl.bindTexture(gl.TEXTURE_2D, s.tex); gl.bindVertexArray(s.mesh.vao); gl.drawElements(gl.TRIANGLES, s.mesh.n, gl.UNSIGNED_SHORT, 0);
+  }
+  gl.disable(gl.BLEND);
+}
+function drawEye(vp, tx, ty, eye, cur, cp, base, focus, opts) {
+  gl.viewport(...vp);
+  const P = M.persp(tx, ty, 0.05, 60), e = eye * state.ipd / 2;
+  if (opts.room && state.room) {
+    gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND);
+    gl.uniformMatrix4fv(U.uMVP, false, M.mul(P, viewMat(cur, e)));
+    gl.uniform1f(U.uGain, TINTS[state.tint]); gl.uniform1f(U.uFocus, 0);
+    gl.bindTexture(gl.TEXTURE_2D, roomTex); gl.bindVertexArray(roomMesh.vao); gl.drawElements(gl.TRIANGLES, roomMesh.n, gl.UNSIGNED_SHORT, 0);
+  }
+  if (opts.scissor) { gl.enable(gl.SCISSOR_TEST); gl.scissor(...opts.scissor); }
+  drawScreens(P, viewMat(cp, e), base, focus, opts.gain);
+  gl.disable(gl.SCISSOR_TEST);
+}
+let lastSize = '';
+function sizeCanvas(W, H) {
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  const stage = document.getElementById('stage');
+  const key = `${W}x${H}|${state.one}|${stage.clientWidth}x${stage.clientHeight}|${devicePixelRatio}`;
+  if (key === lastSize) return; lastSize = key;
+  let cw, ch;
+  if (state.one) { cw = W / devicePixelRatio; ch = H / devicePixelRatio; }
+  else { const sw = stage.clientWidth - 16, sh = stage.clientHeight - 16, a = W / H; cw = Math.min(sw, sh * a); ch = cw / a; }
+  canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
+  stage.classList.toggle('one', state.one);
+  const box = document.getElementById('fovbox');
+  if (state.view === 'context') {
+    const fx = HT / CTX_T, fy = VT / (CTX_T * 9 / 16);
+    Object.assign(box.style, { display: 'block', left: (1 - fx) / 2 * cw + 'px', top: (1 - fy) / 2 * ch + 'px', width: fx * cw + 'px', height: fy * ch + 'px' });
+  } else box.style.display = 'none';
+}
+let focusNow = null, lagNow = 0;
+function render(now) {
+  const mode = MODES[state.mode], base = baseFor();
+  const cur = { ...head }, cp = poseAt(now - (mode.native ? NATIVE_LAT : state.lat));
+  lagNow = Math.hypot(cur.yaw - cp.yaw, cur.pitch - cp.pitch);
+  const focus = computeFocus(base); focusNow = focus;
+  gl.clearColor(0, 0, 0, 1);
+  const gain = state.bright;
+  if (state.view === 'panel') {
+    const n = state.both ? 2 : 1; sizeCanvas(1920 * n, 1080);
+    gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, canvas.width, canvas.height); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    for (let i = 0; i < n; i++) drawEye([i * 1920, 0, 1920, 1080], HT, VT, n === 1 ? -1 : (i ? 1 : -1), cur, cp, base, focus, { room: true, gain });
+  } else if (state.view === 'context') {
+    const W = 2560, H = 1440; sizeCanvas(W, H);
+    gl.viewport(0, 0, W, H); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const fx = HT / CTX_T, fy = VT / (CTX_T * 9 / 16), sw = Math.round(W * fx), sh = Math.round(H * fy);
+    drawEye([0, 0, W, H], CTX_T, CTX_T * 9 / 16, -1, cur, cp, base, focus, { room: true, gain, scissor: [Math.round((W - sw) / 2), Math.round((H - sh) / 2), sw, sh] });
+  } else if (mode.native) {      // cable: the Mac sends its ordinary flat desktop
+    const s = screens[0]; ensure(s); const [rw, rh] = resOf(s); sizeCanvas(rw, rh);
+    gl.viewport(0, 0, rw, rh); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+    gl.uniformMatrix4fv(U.uMVP, false, M.id()); gl.uniform1f(U.uGain, 1);
+    const on = focus && focus.si === 0; gl.uniform1f(U.uFocus, on ? 1 : 0);
+    if (on) { gl.uniform2f(U.uZone, focus.z / focus.n, (focus.z + 1) / focus.n); gl.uniform2f(U.uEdge, 6 / rw, 6 / rh); }
+    gl.bindTexture(gl.TEXTURE_2D, s.tex); gl.bindVertexArray(quadMesh.vao); gl.drawElements(gl.TRIANGLES, quadMesh.n, gl.UNSIGNED_SHORT, 0);
+  } else {                       // cable: Mac-rendered side-by-side stereo frame, no room
+    sizeCanvas(3840, 1080); gl.viewport(0, 0, 3840, 1080); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    drawEye([0, 0, 1920, 1080], HT, VT, -1, cur, cp, base, focus, { room: false, gain: 1 });
+    drawEye([1920, 0, 1920, 1080], HT, VT, 1, cur, cp, base, focus, { room: false, gain: 1 });
+  }
+}
+
+// ---------------------------------------------------------------- top-down map
+const map = document.getElementById('map'), mg = map.getContext('2d');
+const MAP_W = 350, MAP_H = 280, MS = 46; let mapCx = MAP_W / 2, mapCy = MAP_H * .66;
+function sizeMap() { map.width = MAP_W * devicePixelRatio; map.height = MAP_H * devicePixelRatio; map.style.width = MAP_W + 'px'; map.style.height = MAP_H + 'px'; }
+const toMap = (x, z) => [mapCx + x * MS, mapCy + z * MS];
+function screenOutline(s, base) {
+  const m = modelMat(s, base), { w } = dims(s), n = s.curveR ? 24 : 1, pts = [];
+  for (let i = 0; i <= n; i++) { const p = M.apply(m, localPoint(s, (i / n - .5) * w, 0)); pts.push(toMap(p[0], p[2])); }
+  return pts;
+}
+function wedge(yaw, halfDeg, len, fill, stroke, dash) {
+  mg.beginPath(); mg.moveTo(mapCx, mapCy);
+  for (let a = -halfDeg; a <= halfDeg + .01; a += halfDeg / 10) { const d = dir(yaw + a, 0); mg.lineTo(...toMap(d[0] * len, d[2] * len)); }
+  mg.closePath(); if (fill) { mg.fillStyle = fill; mg.fill(); }
+  if (stroke) { mg.setLineDash(dash || []); mg.strokeStyle = stroke; mg.lineWidth = 1; mg.stroke(); mg.setLineDash([]); }
+}
+function drawMap() {
+  const dpr = devicePixelRatio; if (map.width !== MAP_W * dpr) sizeMap();
+  mg.setTransform(dpr, 0, 0, dpr, 0, 0); mg.clearRect(0, 0, MAP_W, MAP_H);
+  mg.font = '10.5px ' + SANS; mg.textAlign = 'center';
+  for (let r = 1; r <= 6; r++) {
+    mg.beginPath(); mg.arc(mapCx, mapCy, r * MS, 0, 7); mg.strokeStyle = r === 3 ? 'rgba(255,255,255,.14)' : 'rgba(255,255,255,.06)'; mg.setLineDash(r === 3 ? [4, 4] : []); mg.stroke(); mg.setLineDash([]);
+    mg.fillStyle = '#566070'; mg.fillText(r + ' m', mapCx + r * MS * .7071 + 12, mapCy + r * MS * .7071 - 2);
+  }
+  mg.fillStyle = '#566070'; mg.fillText('room wall (illustrative)', mapCx, mapCy - 3 * MS - 5);
+  const cp = poseAt(performance.now() - (MODES[state.mode].native ? NATIVE_LAT : state.lat));
+  wedge(head.yaw, HFOV / 2, 6.5, 'rgba(77,163,255,.10)', 'rgba(77,163,255,.5)');
+  if (!MODES[state.mode].native && lagNow > 0.3) wedge(cp.yaw, HFOV / 2, 6.5, null, 'rgba(255,181,71,.8)', [3, 3]);
+  const base = baseFor();
+  screens.forEach((s, i) => {
+    const pts = screenOutline(s, base), sel = i === state.sel, foc = focusNow && focusNow.si === i;
+    mg.beginPath(); pts.forEach((p, j) => j ? mg.lineTo(...p) : mg.moveTo(...p));
+    mg.lineCap = 'round'; mg.lineWidth = sel ? 6 : 4; mg.strokeStyle = sel ? '#4da3ff' : foc ? '#7fd1ff' : '#c3c9d2'; mg.stroke();
+    const mid = pts[Math.floor(pts.length / 2)], away = [mid[0] - mapCx, mid[1] - mapCy], L = Math.hypot(...away) || 1;
+    const off = s.pitch ? -14 : 16;   // pitched screens overlap level ones in plan view: label them on the head side
+    mg.fillStyle = sel ? '#4da3ff' : '#aeb5bf'; mg.font = (sel ? '600 ' : '') + '11px ' + SANS;
+    mg.fillText(s.name.split(' · ')[0] + (s.pitch ? ` (${s.pitch > 0 ? '↑' : '↓'}${Math.abs(s.pitch).toFixed(0)}°)` : ''), mid[0] + away[0] / L * off, mid[1] + away[1] / L * off + 4);
+  });
+  mg.fillStyle = '#e7e9ec'; mg.beginPath(); mg.arc(mapCx, mapCy, 9, 0, 7); mg.fill();
+  const n = dir(head.yaw, 0); mg.beginPath(); mg.moveTo(mapCx + n[0] * 15, mapCy + n[2] * 15); mg.lineTo(...[mapCx + Math.cos(head.yaw * DEG) * 6, mapCy + Math.sin(head.yaw * DEG) * 6]); mg.lineTo(...[mapCx - Math.cos(head.yaw * DEG) * 6, mapCy - Math.sin(head.yaw * DEG) * 6]); mg.fill();
+  mg.textAlign = 'left'; mg.fillStyle = '#7b8594'; mg.font = '10.5px ' + SANS;
+  mg.fillText('blue wedge = what the display can show (42°)', 8, MAP_H - 22);
+  if (!MODES[state.mode].native) { mg.fillStyle = '#c99a4a'; mg.fillText('dashed orange = pose the Mac rendered with', 8, MAP_H - 8); }
+}
+let mapDrag = null;
+function mapPos(ev) { const r = map.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; }
+map.addEventListener('pointerdown', ev => {
+  const [mx, my] = mapPos(ev), base = baseFor(); let best = null;
+  screens.forEach((s, i) => {
+    const pts = screenOutline(s, base);
+    for (let j = 0; j < pts.length - 1; j++) {
+      const [ax, ay] = pts[j], [bx, by] = pts[j + 1], dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((mx - ax) * dx + (my - ay) * dy) / L)), d = Math.hypot(mx - ax - t * dx, my - ay - t * dy);
+      if (!best || d < best.d) best = { d, i };
+    }
+  });
+  if (best && best.d < 14) { state.sel = best.i; mapDrag = best.i; map.setPointerCapture(ev.pointerId); buildInspector(); }
+});
+map.addEventListener('pointermove', ev => {
+  if (mapDrag == null) return;
+  const s = screens[mapDrag], base = baseFor(), [mx, my] = mapPos(ev), x = (mx - mapCx) / MS, z = (my - mapCy) / MS;
+  s.yaw = Math.round(Math.atan2(x, -z) / DEG - base.yaw);
+  s.yaw = ((s.yaw + 540) % 360) - 180;
+  s.dist = Math.max(0.5, Math.min(6, Math.hypot(x, z) / Math.cos(s.pitch * DEG)));
+  s.dist = Math.round(s.dist * 20) / 20;
+  syncInspector();
+});
+map.addEventListener('pointerup', () => { mapDrag = null; });
+
+// ---------------------------------------------------------------- inspector
+const insp = document.getElementById('insp');
+function metrics(s) {
+  const { w, h } = dims(s), [rw, rh, k] = resOf(s);
+  let half;
+  if (s.curveR) { const a = w / 2 / s.curveR; half = Math.atan2(s.curveR * Math.sin(a), s.dist - s.curveR * (1 - Math.cos(a))); }
+  else half = Math.atan2(w / 2, s.dist);
+  const angW = 2 * half / DEG, angH = 2 * Math.atan2(h / 2, s.dist) / DEG;
+  const panelPx = angW * PPD, logicalW = rw / k, ratio = panelPx / logicalW, text13 = 13 * ratio;
+  return { w, h, angW, angH, panelPx, logicalW, ratio, text13, fits: angW <= HFOV && angH <= VFOV, visFrac: Math.min(1, HFOV / angW) };
+}
+function syncInspector() {
+  const s = screens[state.sel]; if (!s) return;
+  for (const [id, v, f] of [['yaw', s.yaw, v => v.toFixed(0) + '°'], ['pitch', s.pitch, v => v.toFixed(0) + '°'], ['dist', s.dist, v => v.toFixed(2) + ' m'], ['diag', s.diag, v => v.toFixed(0) + '″']]) {
+    const el = document.getElementById('i_' + id); if (el && document.activeElement !== el) el.value = v;
+    const o = document.getElementById('o_' + id); if (o) o.textContent = f(v);
+  }
+  const m = metrics(s), tcls = m.text13 >= 10 ? 'good' : m.text13 >= 7.5 ? 'meh' : 'badc';
+  document.getElementById('metrics').innerHTML = `
+    <tr><td>Physical size</td><td>${(m.w * 100).toFixed(0)} × ${(m.h * 100).toFixed(0)} cm at ${s.dist.toFixed(2)} m</td></tr>
+    <tr><td>Covers</td><td>${m.angW.toFixed(1)}° × ${m.angH.toFixed(1)}° &nbsp;<span class="muted">(display: ${HFOV.toFixed(1)}° × ${VFOV.toFixed(1)}°)</span></td></tr>
+    <tr><td>Fits in view</td><td class="${m.fits ? 'good' : 'meh'}">${m.fits ? 'yes, all of it at once' : `no — ${(m.visFrac * 100).toFixed(0)}% of its width visible at once; turn your head`}</td></tr>
+    <tr><td>Panel pixels across</td><td>${Math.round(m.panelPx)} for ${Math.round(m.logicalW)} UI px → ${m.ratio.toFixed(2)}×</td></tr>
+    <tr><td>13 px text becomes</td><td class="${tcls}">${m.text13.toFixed(1)} panel px tall — ${m.text13 >= 10 ? 'comfortable' : m.text13 >= 7.5 ? 'readable, soft' : 'hard to read'}</td></tr>`;
+  for (const s2 of screens) if (s2.mesh && s2._d !== `${s2.diag}|${s2.aspect}|${s2.curveR}`) rebuild(s2);
+  for (const s2 of screens) s2._d = `${s2.diag}|${s2.aspect}|${s2.curveR}`;
+}
+function buildInspector() {
+  const chips = document.getElementById('chips');
+  chips.innerHTML = screens.map((s, i) => `<span class="chip ${i === state.sel ? 'on' : ''}" data-i="${i}">${s.name}</span>`).join('');
+  chips.querySelectorAll('.chip').forEach(c => c.onclick = () => { state.sel = +c.dataset.i; buildInspector(); });
+  const s = screens[state.sel]; const multi = MODES[state.mode].multi;
+  document.getElementById('add').disabled = !multi || screens.length >= 6;
+  document.getElementById('del').disabled = !multi || screens.length <= 1;
+  const resOpts = RES[s.aspect].map((r, i) => `<option value="${i}" ${i === s.resIdx ? 'selected' : ''}>${r[0]}×${r[1]}${r[2] > 1 ? ' (HiDPI, UI looks like ' + r[0] / r[2] + '×' + r[1] / r[2] + ')' : ''}</option>`).join('');
+  insp.innerHTML = `
+    <div class="row"><label>Yaw (left/right)</label><input type="range" id="i_yaw" min="-120" max="120" step="1"><output id="o_yaw"></output></div>
+    <div class="row"><label>Pitch (up/down)</label><input type="range" id="i_pitch" min="-45" max="60" step="1"><output id="o_pitch"></output></div>
+    <div class="row"><label>Distance</label><input type="range" id="i_dist" min="0.5" max="6" step="0.05"><output id="o_dist"></output></div>
+    <div class="row"><label>Diagonal</label><input type="range" id="i_diag" min="15" max="300" step="1"><output id="o_diag"></output></div>
+    <div class="row"><label>Shape</label><select id="i_curve">${[[0, 'Flat'], [4, 'Curved 4000R'], [2.5, 'Curved 2500R'], [1.8, 'Curved 1800R'], [1, 'Curved 1000R']].map(([v, l]) => `<option value="${v}" ${v === s.curveR ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="row"><label>Aspect</label><select id="i_aspect" ${multi ? '' : 'disabled'}>${Object.keys(ASPECTS).map(a => `<option ${a === s.aspect ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+    <div class="row"><label>Resolution</label><select id="i_res">${resOpts}</select></div>
+    <div class="row"><label>Content</label><select id="i_content">${Object.entries(CONTENTS).map(([k, l]) => `<option value="${k}" ${k === s.content ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <table class="m" id="metrics"></table>`;
+  for (const id of ['yaw', 'pitch', 'dist', 'diag']) document.getElementById('i_' + id).oninput = e => { s[id] = +e.target.value; syncInspector(); };
+  document.getElementById('i_curve').onchange = e => { s.curveR = +e.target.value; syncInspector(); };
+  document.getElementById('i_aspect').onchange = e => { s.aspect = e.target.value; s.resIdx = 0; buildInspector(); };
+  document.getElementById('i_res').onchange = e => { s.resIdx = +e.target.value; syncInspector(); };
+  document.getElementById('i_content').onchange = e => { s.content = e.target.value; syncInspector(); };
+  syncInspector();
+}
+document.getElementById('add').onclick = () => {
+  const used = screens.map(s => s.yaw);
+  const yaw = [88, -88, 0, 132, -132].find(y => !used.includes(y)) ?? 0;
+  screens.push(mkScreen({ name: 'Screen ' + (screens.length + 1), yaw, pitch: yaw === 0 ? -28 : 0, dist: 1.5, diag: 32, content: 'chat' }));
+  state.sel = screens.length - 1; buildInspector();
+};
+document.getElementById('del').onclick = () => { rebuild(screens[state.sel]); screens.splice(state.sel, 1); state.sel = 0; buildInspector(); };
+
+// ---------------------------------------------------------------- sidebar wiring
+function setMode(m) {
+  state.mode = m; screens.forEach(rebuild); screens = presetScreens(m); state.sel = 0;
+  anchor.yaw = anchor.pitch = 0; follow.yaw = head.yaw; follow.pitch = head.pitch;
+  document.querySelectorAll('.mode').forEach(el => el.classList.toggle('on', el.dataset.m === m));
+  const host = !MODES[m].native;
+  document.getElementById('lat').disabled = !host;
+  document.getElementById('latNote').textContent = host
+    ? 'Time from head motion to the Mac-drawn frame appearing: sensor read + render + DisplayPort scan-out. 20–40 ms is a realistic target [estimate].'
+    : `Native modes are locked at ${NATIVE_LAT} ms (on-glasses tracking). Switch to “Mac · multi-screen” to adjust this.`;
+  buildInspector(); lastSize = '';
+}
+document.getElementById('modes').innerHTML = Object.entries(MODES).map(([k, m]) =>
+  `<div class="mode" data-m="${k}"><b>${m.label}</b><span>${m.desc}</span><span class="tag ${m.native ? 'n' : 'h'}">${m.native ? 'tracking in glasses · ~3 ms' : 'tracking on Mac · adds latency'}</span></div>`).join('');
+document.querySelectorAll('.mode').forEach(el => el.onclick = () => setMode(el.dataset.m));
+function setView(v) { state.view = v; lastSize = ''; document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+document.querySelectorAll('#views button').forEach(b => b.onclick = () => setView(b.dataset.v));
+function setTint(t) { state.tint = t; document.querySelectorAll('#tint button').forEach(b => b.classList.toggle('on', +b.dataset.t === t)); }
+document.querySelectorAll('#tint button').forEach(b => b.onclick = () => setTint(+b.dataset.t));
+document.getElementById('one').onchange = e => { state.one = e.target.checked; lastSize = ''; };
+document.getElementById('both').onchange = e => { state.both = e.target.checked; lastSize = ''; };
+document.getElementById('room').onchange = e => { state.room = e.target.checked; };
+const bright = document.getElementById('bright'), lat = document.getElementById('lat');
+bright.oninput = () => { state.bright = +bright.value; document.getElementById('brightO').textContent = Math.round(state.bright * 100) + '%'; };
+lat.oninput = () => { state.lat = +lat.value; document.getElementById('latO').textContent = state.lat + ' ms'; };
+bright.oninput(); lat.oninput();
+const sweepBtn = document.getElementById('sweep');
+sweepBtn.onclick = () => { state.sweep = !state.sweep; state.sweepT0 = performance.now() - Math.asin(Math.max(-1, Math.min(1, head.yaw / 38))) / (2 * Math.PI) * 2600; sweepBtn.classList.toggle('on', state.sweep); sweepBtn.textContent = state.sweep ? '■ Stop demo' : '▶ Look-around demo'; };
+document.getElementById('recenter').onclick = () => { anchor.yaw = head.yaw; anchor.pitch = head.pitch; follow.yaw = head.yaw; follow.pitch = head.pitch; };
+document.getElementById('resethead').onclick = () => { head.yaw = head.pitch = 0; if (state.sweep) sweepBtn.onclick(); };
+
+// head input: drag + keys
+const stage = document.getElementById('stage'); let drag = null;
+stage.addEventListener('pointerdown', ev => { if (ev.target !== canvas) return; drag = { x: ev.clientX, y: ev.clientY }; stage.classList.add('drag'); stage.setPointerCapture(ev.pointerId); if (state.sweep) sweepBtn.onclick(); });
+stage.addEventListener('pointermove', ev => {
+  if (!drag) return;
+  const k = HFOV / canvas.clientWidth * (state.view === 'context' ? CTX_T / HT : 1) * (state.both && state.view === 'panel' ? 2 : 1);
+  head.yaw += (ev.clientX - drag.x) * k; head.pitch = Math.max(-70, Math.min(70, head.pitch - (ev.clientY - drag.y) * k));
+  drag = { x: ev.clientX, y: ev.clientY };
+});
+stage.addEventListener('pointerup', () => { drag = null; stage.classList.remove('drag'); });
+const keys = new Set();
+addEventListener('keydown', e => { if (/INPUT|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox') return; const k = e.key.toLowerCase(); if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'w', 'a', 's', 'd'].includes(k)) { keys.add(k); e.preventDefault(); } });
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('resize', () => { lastSize = ''; });
+
+// ---------------------------------------------------------------- status bar
+const bar = document.getElementById('bar'), caption = document.getElementById('caption');
+let lastBar = 0;
+function updateBar(now) {
+  if (now - lastBar < 100) return; lastBar = now;
+  const mode = MODES[state.mode], lagPx = Math.tan(lagNow * DEG) * 960 / HT;
+  const lagCls = lagNow < 0.3 ? 'good' : lagNow < 1.2 ? 'meh' : 'badc';
+  let foc = '—';
+  if (focusNow) { const s = screens[focusNow.si]; foc = focusNow.n > 1 ? `zone ${focusNow.z + 1} of ${focusNow.n} (${['left', 'middle', 'right'][focusNow.z] || ''})` : s.name; }
+  bar.innerHTML = `<span><span class="k">Head</span> <span class="v">yaw ${head.yaw.toFixed(1)}° · pitch ${head.pitch.toFixed(1)}°</span></span>
+    <span><span class="k">Tracking</span> <span class="v">${mode.native ? 'in glasses' : 'on Mac'} · ${mode.native ? NATIVE_LAT : state.lat} ms</span></span>
+    <span><span class="k">Screens lag your head by</span> <span class="v ${lagCls}">${lagNow.toFixed(2)}° ≈ ${Math.round(lagPx)} px</span></span>
+    ${mode.focus ? `<span><span class="k">Keyboard focus →</span> <span class="v" style="color:var(--accent)">${foc}</span></span>` : ''}`;
+  const both = state.both && state.view === 'panel';
+  caption.textContent = {
+    panel: both ? 'Both eyes, 2 × 1920×1080 — left eye | right eye (notice the small stereo offset)' : 'Left eye, exactly 1920×1080 panel pixels, 42° × 25°',
+    context: 'Your wider natural view (90°). Content exists only inside the dashed box; outside it you just see the room through the tinted lenses.',
+    cable: mode.native ? `What the Mac sends over USB-C: a plain flat ${resOf(screens[0])[0]}×${resOf(screens[0])[1]} desktop. The glasses do the 3D placement.` : 'What the Mac sends over USB-C: one 3840×1080 side-by-side frame per refresh, already warped for each eye (black = transparent).',
+  }[state.view] + (state.one ? '   ·   1:1 panel pixels' : '');
+}
+
+// ---------------------------------------------------------------- loop
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  if (state.sweep) { const t = (now - state.sweepT0) / 2600; head.yaw = 38 * Math.sin(2 * Math.PI * t); head.pitch = 6 * Math.sin(4 * Math.PI * t); }
+  const sp = 70 * dt;
+  if (keys.has('arrowleft') || keys.has('a')) head.yaw -= sp;
+  if (keys.has('arrowright') || keys.has('d')) head.yaw += sp;
+  if (keys.has('arrowup') || keys.has('w')) head.pitch = Math.min(70, head.pitch + sp);
+  if (keys.has('arrowdown') || keys.has('s')) head.pitch = Math.max(-70, head.pitch - sp);
+  hist.push({ t: now, yaw: head.yaw, pitch: head.pitch }); while (hist.length > 2 && hist[1].t < now - 1000) hist.shift();
+  const a = 1 - Math.exp(-dt / 0.45); follow.yaw += (head.yaw - follow.yaw) * a; follow.pitch += (head.pitch - follow.pitch) * a;
+  render(now); drawMap(); updateBar(now);
+  requestAnimationFrame(frame);
+}
+sizeMap(); setTint(0); setView('panel'); setMode('host');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

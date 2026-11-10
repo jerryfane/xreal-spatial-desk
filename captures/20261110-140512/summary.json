@@ -1,0 +1,39 @@
+{
+  "started_utc": "2026-11-10T10:05:12.034671+00:00",
+  "host": "169.254.2.1",
+  "static": {
+    "firmware_version": {
+      "cmd": "0x271d",
+      "reply_len": 24,
+      "string": "1.9.1.20260914175625"
+    },
+    "dsp_version": {
+      "cmd": "0x272d",
+      "reply_len": 24,
+      "string": "15.A.00.069_20241211"
+    },
+    "serial_number": {
+      "cmd": "0x2729",
+      "reply_len": 14,
+      "string": "REDACTED00"
+    },
+    "factory_config": {
+      "cmd": "0x271f",
+      "reply_len": 193319
+    },
+    "display_config": {
+      "cmd": "0x275e",
+      "reply_len": 4
+    }
+  },
+  "frames_by_port_and_magic": {
+    "52998:0x2836": 130320,
+    "52999:0x2712": 4,
+    "52999:0x272e": 8,
+    "52999:0x273d": 2,
+    "52999:0x278a": 23
+  },
+  "imu_frames": 93086,
+  "imu_rate_hz": 1000.0,
+  "max_gyro_rad_s": 6.846
+}

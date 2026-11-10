@@ -1,0 +1,6 @@
+__pycache__/
+.DS_Store
+# fresh, unredacted recordings: redact the serial and gzip before committing
+captures/*/frames.jsonl
+captures/*/raw_*.bin
+captures/*/control_gets.json

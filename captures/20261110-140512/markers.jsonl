@@ -1,0 +1,14 @@
+{"t_ns": 30318167, "marker": "still_center", "prompt": "Recording. Look straight ahead and keep your head still.", "seconds": 6}
+{"t_ns": 6043071958, "marker": "yaw_left", "prompt": "Slowly turn your head to the left, then back to the center.", "seconds": 7}
+{"t_ns": 13049628875, "marker": "yaw_right", "prompt": "Slowly turn your head to the right, then back to the center.", "seconds": 7}
+{"t_ns": 20053766292, "marker": "pitch_up", "prompt": "Slowly look up, then back to the center.", "seconds": 6}
+{"t_ns": 26061686583, "marker": "pitch_down", "prompt": "Slowly look down at the keyboard, then back to the center.", "seconds": 6}
+{"t_ns": 32068774958, "marker": "roll", "prompt": "Tilt your head toward your left shoulder, then toward your right shoulder, then straight.", "seconds": 7}
+{"t_ns": 39075135167, "marker": "nod", "prompt": "Nod yes three times.", "seconds": 5}
+{"t_ns": 44078150875, "marker": "shake", "prompt": "Shake your head no three times.", "seconds": 5}
+{"t_ns": 49084863458, "marker": "fast_yaw", "prompt": "Quick glance left, quick glance right, then back to the center.", "seconds": 6}
+{"t_ns": 55092320750, "marker": "free_look", "prompt": "Now look around freely, as if checking several screens around you.", "seconds": 12}
+{"t_ns": 67096215417, "marker": "buttons", "prompt": "Press brightness up once, then brightness down once.", "seconds": 9}
+{"t_ns": 76100798542, "marker": "wear_off_on", "prompt": "Take the glasses off, wait two seconds, and put them back on.", "seconds": 12}
+{"t_ns": 88107535625, "marker": "still_end", "prompt": "Look straight ahead and hold still.", "seconds": 5}
+{"t_ns": 93115345042, "marker": "end"}
