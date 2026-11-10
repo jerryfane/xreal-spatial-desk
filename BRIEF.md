@@ -41,8 +41,10 @@ Protocol sources (community reverse engineering, not official):
 
 1. **Double tracking:**
    - The app needs side-by-side input with the glasses' own anchoring OFF; otherwise the glasses re-move the Mac-rendered image.
-   - Candidates: set display input mode `0x2822` = 1 (SBS, verified on 1.8.1 by xreal-one-cli) and spatial mode via `0x282C`. Which value disables anchoring is unknown.
-   - No SET reply format has been captured yet. Capture one, and restore the original state on quit or crash.
+   - Observed 2026-11-10 on the owner's MacBook Pro (regular input mode, app rendering to the glasses' display): the virtual screen stayed fixed in the room while turning the head, so the glasses did not add their own movement in that mode.
+   - Display input mode `0x2822`: request body `1a 02 08 VV` (field 3 { field 1 mode }), `VV` = 1 side-by-side, 0 regular; e.g. `28 22 00 00 00 08 80 00 00 05 1a 02 08 01`. Sources: georgehorrell/xreal-one-cli @ `6e871ed` (firmware 1.8.1), GarfDev/xreal-one-control-panel @ `d11d9d0` (1.9.0). No GET for this mode is known; the app infers it from the glasses' macOS display size (1920×1080 regular, 3840×1080 side-by-side). Implemented in milestone 1 (`DisplayInputMode`), restored on quit and after a crash.
+   - SET reply format: **not yet captured on this unit.** The community tools expect `22 LL { 08 status }`, status 0 or an empty field = accepted, nonzero = rejected (10001 reported for other setters). Record the first real reply here.
+   - Spatial mode `0x282C` (anchoring) is not set by the app.
 2. **Distortion:** the glasses likely already correct lens distortion for normal DP input. Start without applying the factory mesh and compare straight lines on hardware.
 3. **Latency:** measure motion-to-photon. Use gyro-based pose prediction (render for the pose expected when the frame is shown).
 
@@ -69,7 +71,7 @@ Protocol sources (community reverse engineering, not official):
 
 ## Constraints
 
-- Never flash firmware. Send only verified GETs, plus the minimum SETs needed (SBS mode, spatial mode). Restore the previous values on quit.
+- Never flash firmware. Send only verified GETs, plus the minimum SETs needed (SBS mode, spatial mode). Restore the previous values on quit. The app currently sends one SET: display input mode `0x2822` (owner-approved 2026-11-10).
 - Make the glasses' address configurable (default `169.254.2.1`) so the app can run against the fake glasses.
 - Personal distribution: the private API rules out the App Store.
 

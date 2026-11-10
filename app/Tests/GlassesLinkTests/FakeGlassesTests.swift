@@ -194,6 +194,23 @@ final class FakeGlassesTests: XCTestCase {
         })
     }
 
+    func testModeSwitchArrivesAtTheGlassesExactly() throws {
+        // The fake does not know 0x2822; it logs the command and body it received and does not answer.
+        let fake = try startFake()
+        defer { fake.stop() }
+        let recorder = Recorder()
+        let link = GlassesLink(configuration: .init(host: "127.0.0.1")) { recorder.record($0) }
+        link.start()
+        defer { link.stop() }
+        XCTAssertTrue(recorder.wait { events, _ in Self.replies(events).count == 5 })
+        try link.send(DisplayInputMode.sideBySide)
+        try link.send(DisplayInputMode.regular)
+        XCTAssertTrue(fake.waitFor("unrecorded command 0x2822 body=1a020800", timeout: 5), fake.text)
+        XCTAssertTrue(fake.text.contains("unrecorded command 0x2822 body=1a020801"), fake.text)
+        let unrecorded = fake.text.components(separatedBy: "unrecorded command").count - 1
+        XCTAssertEqual(unrecorded, 2, "nothing but the two mode switches beyond the recorded GETs")
+    }
+
     func testReconnectsAfterTheGlassesGoAway() throws {
         var fake = try startFake()
         let recorder = Recorder()
