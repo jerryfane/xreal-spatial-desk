@@ -46,7 +46,7 @@ Protocol sources (community reverse engineering, not official):
    - SET reply, **captured 2026-11-10 on this unit** (owner's MacBook Pro, macOS 26.2): frame `28 22 | 00 00 00 06 | 00 00 00 TX | 22 00`, i.e. the command echoed, txid with MSB cleared, body `22 00` (empty field 4) = accepted, for both value 1 and value 0. The reply arrives in ~50–80 ms; the glasses then re-enumerate as a 3840×1080 (or back to 1920×1080) display after ~2.1–2.4 s, keeping the same macOS display ID. A rejection was not seen; the community tools report field 4 { field 1 nonzero status } for that.
    - Side-by-side verified end to end 2026-11-10 (owner, MacBook Pro): with the app's image covering the whole 3840×1080 glasses display, both eyes fuse one floating screen comfortably. Two things to avoid: side-by-side mode with the plain desktop showing (each eye gets a different picture, which hurts), and an image that covers only part of the widened display (the app now re-fits it on every display change).
    - The mode does not persist: unplugging and replugging the glasses returns them to regular input.
-   - Spatial mode `0x282C` (anchoring) is not set by the app; in regular and side-by-side input the virtual screen stayed fixed in the room, so it was not needed.
+   - Spatial mode `0x282C` (anchoring) is not set by the app. In regular input the virtual screen stayed fixed in the room (owner, 2026-11-10); in side-by-side input that was not checked separately.
 2. **Distortion:** the glasses likely already correct lens distortion for normal DP input. Start without applying the factory mesh and compare straight lines on hardware.
 3. **Latency:** measure motion-to-photon. Use gyro-based pose prediction (render for the pose expected when the frame is shown).
 
