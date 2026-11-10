@@ -99,9 +99,9 @@ final class RendererTests: XCTestCase {
     func testScreenStaysInPlaceWhenTheHeadTurns() throws {
         let tex = solid([255, 255, 255, 255])
         let screen = ScreenPlacement()
-        // Small turns, so the 0.9 m screen (±15.7° wide) stays inside the 42° field of view and is not clipped.
+        // Small turns, so the screen (±15.7° × ±9° at 1.6 m) stays inside the 42° × 24.7° field of view, unclipped.
         for pose in [HeadPose(yaw: 4, pitch: 0, roll: 0), HeadPose(yaw: -4, pitch: 0, roll: 0),
-                     HeadPose(yaw: 0, pitch: 5, roll: 0), HeadPose(yaw: 0, pitch: -5, roll: 0)] {
+                     HeadPose(yaw: 0, pitch: 2, roll: 0), HeadPose(yaw: 0, pitch: -2, roll: 0)] {
             let head = pose.quaternion
             let box = try XCTUnwrap(render(head: head, screen: screen, texture: tex).litBox(columns: 0..<960))
             let px = screen.corners.compactMap { displays.left.pixel(of: $0, head: head, width: displays.width, height: displays.height) }
@@ -113,9 +113,9 @@ final class RendererTests: XCTestCase {
         // Direction: turning right moves the world left in the image; looking up moves it down.
         let ahead = try XCTUnwrap(render(head: .identity, texture: tex).litBox(columns: 0..<960))
         let right = try XCTUnwrap(render(head: HeadPose(yaw: 4, pitch: 0, roll: 0).quaternion, texture: tex).litBox(columns: 0..<960))
-        let up = try XCTUnwrap(render(head: HeadPose(yaw: 0, pitch: 5, roll: 0).quaternion, texture: tex).litBox(columns: 0..<960))
+        let up = try XCTUnwrap(render(head: HeadPose(yaw: 0, pitch: 2, roll: 0).quaternion, texture: tex).litBox(columns: 0..<960))
         XCTAssertLessThan(right.maxX, ahead.maxX - 50)
-        XCTAssertGreaterThan(up.minY, ahead.minY + 50)
+        XCTAssertGreaterThan(up.minY, ahead.minY + 30)
     }
 
     func testPlaceholderWithoutCapture() throws {
