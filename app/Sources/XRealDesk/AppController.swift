@@ -354,6 +354,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         lastStats = (now, captured, rendered)
         (contentWindow?.contentView as? TestPatternView)?.needsDisplay = true
+        // A restore's acceptance can arrive after the display already changed (no further screen notification then):
+        // re-observe once a second while a switch back is owed, and re-place when it completes.
+        if modes.keeper.awaitingPhysicalRestore != nil {
+            if let mode = GlassesDisplay.find(excluding: display?.displayID)?.mode { modes.keeper.glassesObserved(mode) }
+            if modes.keeper.awaitingPhysicalRestore == nil { placeRenderWindow(reason: "glasses back in their original mode") }
+        }
         updateStatus()
     }
 

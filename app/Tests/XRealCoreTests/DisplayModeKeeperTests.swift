@@ -121,12 +121,28 @@ final class DisplayModeKeeperTests: XCTestCase {
         XCTAssertNil(next.awaitingPhysicalRestore)
     }
 
-    func testSeeingTheOriginalModeBeforeTheRestoreIsAcceptedDoesNotEndTheWait() throws {
-        // E.g. observed in the instant before the switch took effect: the restore is still owed.
+    func testRestoreSeenBeforeItsAcceptanceEndsTheWaitWhenTheAcceptanceArrives() throws {
+        // The display change can be processed before the reply. No further display change follows, so the
+        // acceptance itself must end the wait (otherwise the glasses stay covered forever).
         let keeper = DisplayModeKeeper(markerURL: marker)
         _ = try keeper.request(.sideBySide, current: .regular)
+        keeper.glassesObserved(.sideBySide)
+        XCTAssertEqual(keeper.restore(), .regular)
+        keeper.sent(.regular, transactionID: 1)
         keeper.glassesObserved(.regular)
-        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular)
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular, "not accepted yet")
+        keeper.handle(accepted(1))
+        XCTAssertNil(keeper.awaitingPhysicalRestore)
+    }
+
+    func testAnObservationFromBeforeTheSwitchDoesNotCount() throws {
+        let keeper = DisplayModeKeeper(markerURL: marker)
+        keeper.glassesObserved(.regular)
+        _ = try keeper.request(.sideBySide, current: .regular)
+        XCTAssertEqual(keeper.restore(), .regular)
+        keeper.sent(.regular, transactionID: 1)
+        keeper.handle(accepted(1))
+        XCTAssertEqual(keeper.awaitingPhysicalRestore, .regular, "must be seen regular after the switch")
     }
 
     func testNoSwitchWhenTheOriginalCannotBeRecorded() throws {

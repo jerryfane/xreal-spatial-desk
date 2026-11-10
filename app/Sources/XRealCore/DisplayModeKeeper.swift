@@ -23,6 +23,8 @@ public final class DisplayModeKeeper: @unchecked Sendable {
     /// found at launch) until `glassesObserved` sees them back in it. Unlike `original`, this survives the accepted
     /// reply: the display changes ~2.4 s later, and until then the glasses must stay covered.
     private var physicalRestore: DisplayInputMode?
+    /// The glasses' mode as last observed.
+    private var lastObserved: DisplayInputMode?
 
     public init(markerURL: URL) {
         self.markerURL = markerURL
@@ -38,8 +40,14 @@ public final class DisplayModeKeeper: @unchecked Sendable {
     /// Call with the glasses' mode as currently seen (display size). Seeing them in the original mode ends the wait.
     public func glassesObserved(_ mode: DisplayInputMode) {
         lock.withLock {
-            if mode == physicalRestore, original == nil { physicalRestore = nil }
+            lastObserved = mode
+            settleLocked()
         }
+    }
+
+    /// Ends the wait once the restore is accepted and the glasses are seen in the original mode, in either order.
+    private func settleLocked() {
+        if original == nil, let target = physicalRestore, lastObserved == target { physicalRestore = nil }
     }
 
     /// `~/Library/Application Support/XRealDesk/display-mode-restore`.
@@ -72,6 +80,7 @@ public final class DisplayModeKeeper: @unchecked Sendable {
                 try writeMarker(current)
                 original = current
                 physicalRestore = current
+                lastObserved = nil
             }
             desired = mode
             return mode
@@ -103,6 +112,7 @@ public final class DisplayModeKeeper: @unchecked Sendable {
                 try? FileManager.default.removeItem(at: markerURL)
                 original = nil
                 desired = nil
+                settleLocked()
             }
             return mode
         }
