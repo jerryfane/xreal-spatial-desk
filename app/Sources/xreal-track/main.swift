@@ -209,6 +209,18 @@ func measure(capture: Capture, host: String, timeout: TimeInterval) {
         fail("timed out after \(Int(timeout)) s: started=\(r.started), IMU samples=\(r.imuSamples); \(r.messages.joined(separator: "; "))")
     }
 
+    print("\nReceived \(r.imuSamples) IMU samples over \(String(format: "%.1f", r.track.times.last! - r.track.times.first!)) s. GET replies:")
+    for c in GetCommand.allCases {
+        print("  \(r.replies[c].map { describe(.reply($0)) } ?? "GET \(c): NO REPLY")")
+    }
+    if let reply = r.replies[.factoryConfig] {
+        let same = (try? FactoryCalibration(reply: reply)) == capture.calibration
+        print("  factory calibration over TCP \(same ? "matches" : "DIFFERS FROM") control_gets.json")
+    }
+    print("Buttons during playback: \(r.buttons.map { "key \($0.key) \($0.state)" }.joined(separator: ", "))")
+    print("Wear events during playback: \(r.wear.map { "\($0)" }.joined(separator: ", "))")
+    print("Connections: \(r.connects); notes: \(r.messages.isEmpty ? "none" : r.messages.joined(separator: "; "))")
+
     // Compare with the offline replay of the same byte stream: proves nothing was lost or reordered on the wire.
     if let offline = try? capture.imuSamples() {
         let first = r.track.times[0], last = r.track.times.last!

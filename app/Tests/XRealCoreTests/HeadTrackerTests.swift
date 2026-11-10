@@ -68,6 +68,16 @@ final class HeadTrackerTests: XCTestCase {
         XCTAssertEqual(t.pose.yaw, 0, accuracy: 1e-9)
     }
 
+    func testStrongLinearAccelerationDoesNotTiltTheView() {
+        var t = HeadTracker(calibration: .identity)
+        // Head still and level, then pushed sideways at 5 m/s² for 1 s (|a| ≈ 11 m/s²): not gravity, so not used for tilt.
+        t.update(IMUSample(timestampNs: 0, gyro: .zero, accel: Vec3(0, -HeadTracker.gravity, 0), temperature: 30))
+        for i in 1...1000 {
+            t.update(IMUSample(timestampNs: UInt64(i) * 1_000_000, gyro: .zero, accel: Vec3(5, -HeadTracker.gravity, 0), temperature: 30))
+        }
+        XCTAssertLessThan(abs(t.pose.roll), 1)
+    }
+
     func testRecenterZeroesYawAndKeepsTilt() {
         var t = HeadTracker(calibration: .identity)
         let q = spin(&t, from: .identity, rate: Vec3(0, 1, 0), seconds: 0.6)
