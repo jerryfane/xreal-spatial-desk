@@ -7,8 +7,8 @@ import XRealCore
 /// is released. Events are delivered on those threads: sensor events (1000 Hz) on the sensor thread, control events
 /// on the control thread. Keep the handler short and thread-safe. The handler may call `stop()`.
 ///
-/// Only the read-only GETs in `GetCommand` can be sent. On every control connection the link sends
-/// `Configuration.initialRequests` (by default all five).
+/// Only the read-only GETs in `GetCommand` and the side-by-side switch `DisplayInputMode` can be sent. On every
+/// control connection the link sends `Configuration.initialRequests` (by default all five GETs).
 public final class GlassesLink: @unchecked Sendable {
     public static let defaultHost = "169.254.2.1"
     public static let sensorPort: UInt16 = 52998
@@ -67,7 +67,11 @@ public final class GlassesLink: @unchecked Sendable {
 
     /// Sends a GET on the control connection. The reply arrives as `.control(.reply)` with this transaction ID.
     @discardableResult
-    public func send(_ command: GetCommand) throws -> UInt32 { try core.send(command) }
+    public func send(_ command: GetCommand) throws -> UInt32 { try core.send(command.request(transactionID:)) }
+
+    /// Switches the display input mode. The reply arrives as `.control(.setReply)` with this transaction ID.
+    @discardableResult
+    public func send(_ mode: DisplayInputMode) throws -> UInt32 { try core.send(mode.request(transactionID:)) }
 }
 
 private final class Core: @unchecked Sendable {
@@ -111,14 +115,14 @@ private final class Core: @unchecked Sendable {
         condition.unlock()
     }
 
-    func send(_ command: GetCommand) throws -> UInt32 {
+    func send(_ request: (UInt32) -> Frame) throws -> UInt32 {
         condition.lock()
         let socket = sockets[.control]
         let tx = nextTransactionID
         nextTransactionID = nextTransactionID % 0x7FFF_FFFF + 1
         condition.unlock()
         guard let socket else { throw GlassesLink.NotConnected() }
-        try socket.send(command.request(transactionID: tx).encoded())
+        try socket.send(request(tx).encoded())
         return tx
     }
 
@@ -167,7 +171,7 @@ private final class Core: @unchecked Sendable {
     private func read(_ socket: TCPSocket, _ channel: Channel) -> String {
         if channel == .control {
             do {
-                for command in configuration.initialRequests { _ = try send(command) }
+                for command in configuration.initialRequests { _ = try send(command.request(transactionID:)) }
             } catch {
                 return "sending GET requests: \(error)"
             }

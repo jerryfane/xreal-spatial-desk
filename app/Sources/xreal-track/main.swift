@@ -57,6 +57,8 @@ func describe(_ m: ControlMessage) -> String {
         default:
             return "GET \(r.command): \((try? r.stringValue()) ?? "?")"
         }
+    case .setReply(let r):
+        return "display mode reply tx \(r.transactionID): \(r.body.map { String(format: "%02x", $0) }.joined(separator: " ")) → \(r.result)"
     case .button(let b): return "button key \(b.key) \(b.state)"
     case .wear(let w): return "wear \(w)"
     case .telemetry(let i, let v): return "telemetry #\(i) = \(v)"

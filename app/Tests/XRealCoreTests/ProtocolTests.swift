@@ -56,11 +56,42 @@ final class ControlTests: XCTestCase {
         XCTAssertEqual(GetCommand.factoryConfig.request(transactionID: 4).encoded(), Fixtures.bytes("271f00000006800000041800"))
     }
 
-    func testRequestsCanOnlyBeTheFiveVerifiedGets() {
-        XCTAssertEqual(Set(GetCommand.allCases.map(\.rawValue)), [0x271D, 0x272D, 0x2729, 0x271F, 0x275E])
-        for command in GetCommand.allCases {
-            XCTAssertEqual(Array(command.request(transactionID: 0xFFFF_FFFF).payload.suffix(2)), [0x18, 0x00])
+    /// Every request the package can build: the five read-only GETs and the two side-by-side switch frames. Any other
+    /// command (another SET, firmware update, ...) has no constructor, so it cannot reach `GlassesLink.send`.
+    func testOnlyTheVerifiedGetsAndTheModeSwitchCanBeSent() {
+        let gets = GetCommand.allCases.map { $0.request(transactionID: 7) }
+        let sets = DisplayInputMode.allCases.map { $0.request(transactionID: 7) }
+        XCTAssertEqual(Set((gets + sets).map(\.magic)), [0x271D, 0x272D, 0x2729, 0x271F, 0x275E, 0x2822])
+        for frame in gets { XCTAssertEqual(Array(frame.payload.dropFirst(4)), [0x18, 0x00]) }
+        XCTAssertEqual(Set(sets.map { Array($0.payload.dropFirst(4)) }), [[0x1A, 0x02, 0x08, 0x00], [0x1A, 0x02, 0x08, 0x01]])
+        XCTAssertNil(DisplayInputMode(rawValue: 2), "no other mode value")
+    }
+
+    func testModeSwitchBytes() {
+        // The exact frames sent to the glasses (txid 5): magic, length 8, txid with the MSB set, 1a 02 08 VV.
+        XCTAssertEqual(DisplayInputMode.sideBySide.request(transactionID: 5).encoded(), Fixtures.bytes("282200000008800000051a020801"))
+        XCTAssertEqual(DisplayInputMode.regular.request(transactionID: 6).encoded(), Fixtures.bytes("282200000008800000061a020800"))
+    }
+
+    func testModeFromDisplayWidth() {
+        XCTAssertEqual(DisplayInputMode(displayWidth: 1920), .regular)
+        XCTAssertEqual(DisplayInputMode(displayWidth: 3840), .sideBySide)
+        XCTAssertNil(DisplayInputMode(displayWidth: 3024))
+    }
+
+    func testModeSwitchReplies() {
+        func reply(_ hex: String) -> ControlMessage {
+            var decoder = FrameDecoder()
+            return ControlMessage(try! decoder.push(Fixtures.bytes(hex))[0])
         }
+        // 2822 | len | txid 5 | body. Shapes as the community tools parse them; not yet captured on hardware.
+        guard case .setReply(let ok) = reply("282200000006000000052200") else { return XCTFail() }
+        XCTAssertEqual(ok.transactionID, 5)
+        XCTAssertEqual(ok.result, .accepted)
+        XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("22020800")).result, .accepted)
+        XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("220308914e")).result, .rejected(status: 10001))
+        XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("1800")).result, .unrecognised)
+        XCTAssertEqual(SetReply(transactionID: 5, body: Fixtures.bytes("2202")).result, .unrecognised)
     }
 
     func testRecordedRepliesDecode() throws {

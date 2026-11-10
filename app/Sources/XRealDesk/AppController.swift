@@ -12,6 +12,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     let options: Options
     private let head = HeadState()
     private var link: GlassesLink?
+    private let modes = DisplayModeController()
+    private var sbsItem: NSMenuItem?
     private var display: XRVirtualDisplay?
     private var capture: ScreenCapture?
     private var renderer: Renderer?
@@ -40,8 +42,13 @@ final class AppController: NSObject, NSApplicationDelegate {
             probe()
             return
         }
+        if options.sbsCheck {
+            sbsCheck()
+            return
+        }
         createDisplay()
         startGlasses()
+        if options.sbs { setSideBySide(true) }
         startRenderer()
         makeStatusItem()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
@@ -106,12 +113,42 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func startGlasses() {
-        let head = self.head
-        let link = GlassesLink(configuration: GlassesLink.Configuration(host: options.host)) { head.handle($0) }
+        let head = self.head, modes = self.modes
+        let link = GlassesLink(configuration: GlassesLink.Configuration(host: options.host)) { event in
+            head.handle(event)
+            modes.handle(event)
+        }
         Log.line("glasses: connecting to \(options.host)")
+        modes.attach(link)
         link.start()
         self.link = link
     }
+
+    // MARK: side-by-side (milestone 1)
+
+    /// Owner-watched first hardware run: only the link, then the scripted mode check; the app quits when it ends.
+    private func sbsCheck() {
+        startGlasses()
+        let modes = self.modes
+        DispatchQueue.global().async {
+            let pass = modes.runCheck()
+            DispatchQueue.main.async { exit(pass ? 0 : 1) }
+        }
+    }
+
+    private func setSideBySide(_ on: Bool) {
+        if on {
+            _ = modes.switchTo(.sideBySide, glasses: GlassesDisplay.find(excluding: display?.displayID))
+        } else if let mode = modes.keeper.restore() {
+            modes.send(mode, why: "menu")
+        }
+        updateStatus()
+    }
+
+    /// Side-by-side is "on" while this run has the glasses switched away from their original mode.
+    private var sideBySideOn: Bool { modes.keeper.requested == .sideBySide && modes.keeper.pendingRestore != nil }
+
+    @objc private func sbsAction() { setSideBySide(!sideBySideOn) }
 
     private func startRenderer() {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -239,6 +276,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         let recenter = NSMenuItem(title: "Recenter", action: #selector(recenterAction), keyEquivalent: "r")
         recenter.target = self
         menu.addItem(recenter)
+        let sbs = NSMenuItem(title: "Side-by-side 3D on the glasses", action: #selector(sbsAction), keyEquivalent: "s")
+        sbs.target = self
+        menu.addItem(sbs)
+        sbsItem = sbs
         menu.addItem(NSMenuItem(title: "Quit XReal Desk", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
         statusItem = item
@@ -269,6 +310,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusLines[0].title = head.status
         statusLines[1].title = display.map { "Virtual display: \($0.displayID), \(options.displayWidth)×\(options.displayHeight)" } ?? "Virtual display: none"
         statusLines[2].title = captureStatus + String(format: " · capture %.0f fps · render %.0f fps", fps.capture, fps.render)
+        sbsItem?.state = sideBySideOn ? .on : .off
+        if let last = modes.keeper.last, last.result != .accepted {
+            sbsItem?.title = "Side-by-side 3D on the glasses (glasses replied: \(last.result))"
+        }
     }
 
     private func snapshot(at t: Double) {
@@ -297,6 +342,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func shutdown() {
         renderWindow?.orderOut(nil)
         contentWindow?.orderOut(nil)
+        // Put the glasses' display mode back first, while the control connection is still up.
+        modes.restoreBlocking()
         link?.stop()
         if let capture {
             let done = DispatchSemaphore(value: 0)

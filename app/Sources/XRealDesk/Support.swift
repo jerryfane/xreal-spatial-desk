@@ -14,13 +14,18 @@ struct Options {
     var snapshots: [Double] = []
     /// Only create the virtual display, list displays, remove it, quit.
     var probe = false
+    /// Switch the glasses to side-by-side input mode at start (restored on quit).
+    var sbs = false
+    /// Only run the scripted side-by-side check (read, switch, read back, restore, read back) and quit.
+    var sbsCheck = false
     var displayWidth = 1920
     var displayHeight = 1080
     /// Show the side-by-side frame full screen on this display (e.g. the glasses) instead of in a window.
     var outputDisplay: CGDirectDisplayID?
 
     static let usage = """
-    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--display WxH] [--output ID] [--probe]
+    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--display WxH] [--output ID] [--sbs]
+              [--probe | --sbs-check]
       --host       glasses address (default 169.254.2.1; 127.0.0.1 for tools/fake_glasses.py)
       --seconds    quit after N seconds
       --out        write log.txt and snapshot PNGs here
@@ -28,7 +33,11 @@ struct Options {
       --display    virtual display size in pixels (default 1920x1080)
       --output     show the 3840×1080 side-by-side image full screen on this display ID (see the log's display
                    list) instead of in a half-size window
+      --sbs        switch the glasses to side-by-side 3D at start; the original mode is restored on quit, and on the
+                   next start if the app crashed
       --probe      create the virtual display, list displays, remove it and quit (no capture, no permissions)
+      --sbs-check  read the glasses' mode, switch to side-by-side, read back, restore, read back, then quit;
+                   exit 0 only if every step matched (no virtual display, no capture)
     """
 
     init(arguments: [String]) throws {
@@ -57,6 +66,8 @@ struct Options {
                 displayWidth = parts[0]
                 displayHeight = parts[1]
             case "--probe": probe = true
+            case "--sbs": sbs = true
+            case "--sbs-check": sbsCheck = true
             case "--output":
                 guard let id = UInt32(try value(a)) else { throw OptionError("--output needs a display ID") }
                 outputDisplay = id
