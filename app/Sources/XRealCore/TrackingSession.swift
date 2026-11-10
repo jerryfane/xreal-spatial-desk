@@ -2,9 +2,9 @@ import Foundation
 
 /// Head tracking shared between the GlassesLink threads (writers) and the renderer (reader).
 ///
-/// IMU samples that arrive before the factory calibration are buffered and replayed when it arrives. Tracking
-/// recenters itself once, `autoRecenterDelay` after it starts (first gravity-like sample), so the view starts
-/// straight ahead whatever order the calibration and the first samples arrive in.
+/// IMU samples that arrive before the factory calibration are buffered (last 2 s) and replayed when it arrives.
+/// Tracking recenters itself once, 0.5 s after it starts (first gravity-like sample), so the view starts straight
+/// ahead whatever order the calibration and the first samples arrive in.
 public final class TrackingSession: @unchecked Sendable {
     private enum AutoRecenter {
         case waitingForTracking
@@ -17,13 +17,10 @@ public final class TrackingSession: @unchecked Sendable {
     private var storedCalibration: FactoryCalibration?
     private var pending: [IMUSample] = []
     private var autoRecenter = AutoRecenter.waitingForTracking
-    private let autoRecenterDelayNs: UInt64
-    private let maxPending: Int
+    private static let autoRecenterDelayNs: UInt64 = 500_000_000
+    private static let maxPending = 2000
 
-    public init(autoRecenterDelay: TimeInterval = 0.5, maxPending: Int = 2000) {
-        autoRecenterDelayNs = UInt64(autoRecenterDelay * 1e9)
-        self.maxPending = maxPending
-    }
+    public init() {}
 
     /// The factory calibration, once received.
     public var calibration: FactoryCalibration? { lock.withLock { storedCalibration } }
@@ -53,7 +50,7 @@ public final class TrackingSession: @unchecked Sendable {
         lock.withLock {
             guard tracker != nil else {
                 pending.append(sample)
-                if pending.count > maxPending { pending.removeFirst(pending.count - maxPending) }
+                if pending.count > Self.maxPending { pending.removeFirst(pending.count - Self.maxPending) }
                 return
             }
             updateLocked(sample)
@@ -74,7 +71,7 @@ public final class TrackingSession: @unchecked Sendable {
         guard tracker!.isInitialized, let now = tracker!.lastTimestampNs else { return }
         switch autoRecenter {
         case .waitingForTracking:
-            autoRecenter = .at(now + autoRecenterDelayNs)
+            autoRecenter = .at(now + Self.autoRecenterDelayNs)
         case .at(let deadline) where now >= deadline:
             tracker!.recenter()
             autoRecenter = .done
