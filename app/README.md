@@ -1,13 +1,16 @@
 # app/: XReal Desk (Swift package)
 
-Milestone 2 of [BRIEF.md](../BRIEF.md): talk to the glasses and track the head. No UI yet.
+Milestones 2 and 3 of [BRIEF.md](../BRIEF.md): talk to the glasses, track the head, and show one virtual display
+in 3D as a side-by-side image.
 
 | Target | What it does |
 |---|---|
-| `XRealCore` | Frame codec, control messages (GET replies, buttons, wear, telemetry), sensor frames, factory calibration, `HeadTracker`. Pure logic, no I/O. |
+| `XRealCore` | Frame codec, control messages (GET replies, buttons, wear, telemetry), sensor frames, factory calibration, `HeadTracker`, per-eye projection. Pure logic, no I/O. |
 | `GlassesLink` | Both TCP connections (sensor 52998, control 52999), reconnect with backoff, the five verified GETs on every connect. Host is configurable: `169.254.2.1` for the glasses, `127.0.0.1` for the fake. |
 | `CaptureTools` | Loads a `captures/` recording and measures tracking against its recorded steps. Tests and CLI only. |
 | `xreal-track` | CLI: `live`, `measure` (against `tools/fake_glasses.py`), `replay` (offline). |
+| `CVirtualDisplay` | Objective-C wrapper for the private `CGVirtualDisplay` API (macOS only). |
+| `XRealDesk` | Menu bar app (macOS 14+): one virtual display → ScreenCaptureKit → Metal 3840×1080 side-by-side render, placed with the head pose. |
 
 The package only builds requests from `GetCommand`, which lists the five GETs verified in BRIEF.md. There is no
 code path that sends a SET or any other command.
@@ -41,3 +44,28 @@ the factory temperature table at the IMU temperature carried in every frame.
 Frame and angles: X right, Y down, Z forward (the sensor's own axes). `yaw > 0` turns right, `pitch > 0` looks up,
 `roll > 0` tilts the right ear down. `recenter()` zeroes yaw at the current heading; pitch and roll stay absolute.
 Yaw has no absolute reference, so its drift depends on the bias calibration alone.
+
+## XRealDesk (menu bar app)
+
+```sh
+swift build --product XRealDesk
+# The app needs a bundle for its Screen Recording permission; scripts/studio-app.sh shows how one is made.
+XRealDesk.app/Contents/MacOS/XRealDesk --host 127.0.0.1 --seconds 60 --out run/ --snapshots 10,30
+```
+
+On launch it creates one 1920×1080 virtual display (private `CGVirtualDisplay`, as DeskPad/BetterDisplay do), puts a
+test pattern window on it, captures it with ScreenCaptureKit and renders it with Metal as one flat screen 1.6 m ahead,
+0.9 m wide, for both eyes (left half: left eye, right half: right eye), using the factory intrinsics and eye poses and
+the head orientation from `HeadTracker`. The 3840×1080 image is shown in a half-size window, or full screen on a chosen
+display with `--output ID` (for example the glasses' display). Black is see-through on the glasses.
+
+- Menu bar item "XR": head pose, virtual display, capture/render rate, **Recenter**, **Quit**. `r` in the render
+  window also recenters. Tracking recenters itself 0.5 s after it starts.
+- The virtual display is removed on Quit, `--seconds`, SIGTERM/SIGINT/SIGHUP, and by WindowServer when the process
+  dies (crash, `kill -9`).
+- **Screen Recording permission** is needed for the capture. If it is missing, the app asks macOS to show its prompt and
+  logs exactly what to grant: System Settings › Privacy & Security › Screen & System Audio Recording › XRealDesk, then
+  restart the app. Until then the renderer shows a checkerboard in place of the display.
+- No Accessibility permission is used yet.
+- On a Mac without a monitor (such as a headless Mac Studio), the virtual display replaces the system's placeholder
+  display while it exists, so the desktop and any Screen Sharing view move onto it.

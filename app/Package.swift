@@ -18,7 +18,17 @@ let package = Package(
         .target(name: "CaptureTools", dependencies: ["XRealCore"]),
         // Command-line tool: live pose, replay of a capture, measurement against the fake glasses.
         .executableTarget(name: "xreal-track", dependencies: ["XRealCore", "GlassesLink", "CaptureTools"]),
+        // Private CGVirtualDisplay API behind a small Objective-C wrapper (macOS only; empty elsewhere).
+        .target(name: "CVirtualDisplay", linkerSettings: [.linkedFramework("CoreGraphics", .when(platforms: [.macOS]))]),
+        // Metal side-by-side renderer (macOS only; empty elsewhere).
+        .target(name: "SpatialRenderer", dependencies: ["XRealCore"]),
+        // The menu bar app (milestone 3): virtual display → ScreenCaptureKit → Metal side-by-side render.
+        // scripts/studio-app.sh wraps the binary in XRealDesk.app.
+        .executableTarget(name: "XRealDesk", dependencies: [
+            "XRealCore", "GlassesLink", "SpatialRenderer", .target(name: "CVirtualDisplay", condition: .when(platforms: [.macOS])),
+        ]),
         .testTarget(name: "XRealCoreTests", dependencies: ["XRealCore", "CaptureTools"]),
         .testTarget(name: "GlassesLinkTests", dependencies: ["GlassesLink", "XRealCore"]),
+        .testTarget(name: "SpatialRendererTests", dependencies: ["SpatialRenderer", "XRealCore", "CaptureTools"]),
     ]
 )
