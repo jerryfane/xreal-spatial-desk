@@ -4,3 +4,8 @@ __pycache__/
 captures/*/frames.jsonl
 captures/*/raw_*.bin
 captures/*/control_gets.json
+
+# Swift build output and Mac Studio run logs
+app/.build/
+app/.swiftpm/
+studio-output/
