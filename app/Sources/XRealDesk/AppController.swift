@@ -3,6 +3,7 @@ import AppKit
 import CVirtualDisplay
 import GlassesLink
 import MetalKit
+import SpatialRenderer
 import XRealCore
 
 /// Menu bar app: one virtual display, captured and shown as a head-tracked screen in a side-by-side window.
@@ -121,9 +122,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             var capture: ScreenCapture?
             do { capture = try ScreenCapture(device: device) } catch { Log.line("capture: \(error)") }
             self.capture = capture
-            let renderer = try Renderer(device: device, head: head) { capture?.latestFrame }
-            // Size the virtual screen like the display it shows (16:9 → 0.9 m × 0.506 m at 1.6 m).
-            renderer.screen.height = renderer.screen.width * Double(options.displayHeight) / Double(options.displayWidth)
+            // One screen 1.6 m ahead, 0.9 m wide, with the virtual display's aspect ratio.
+            var placement = ScreenPlacement()
+            placement.height = placement.width * Double(options.displayHeight) / Double(options.displayWidth)
+            let head = self.head
+            let renderer = try Renderer(device: device) { [placement] in
+                guard let displays = head.calibration?.displays else { return (nil, nil) }
+                let frame = capture?.latestFrame
+                return (Renderer.Scene(displays: displays, head: head.orientation, screen: placement, texture: frame?.texture),
+                        frame?.backing)
+            }
             let window: NSWindow
             if let id = options.outputDisplay {
                 guard let screen = NSScreen.screens.first(where: { $0.displayID == id }) else {
@@ -268,7 +276,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         Log.line(String(format: "snapshot t=%.0f s: yaw %.1f pitch %.1f roll %.1f, capture %.0f fps (%d frames), render %.0f fps",
                         t, p.yaw, p.pitch, p.roll, fps.capture, capture?.framesReceived ?? 0, fps.render))
         guard let out = options.out else { return }
-        renderer?.snapshot(to: out.appendingPathComponent(String(format: "sbs-%03.0fs.png", t)))
+        let name = String(format: "sbs-%03.0fs.png", t)
+        renderer?.snapshot(to: out.appendingPathComponent(name)) { ok in
+            Log.line(ok ? "snapshot: wrote \(name)" : "snapshot: FAILED \(name)")
+        }
     }
 
     // MARK: teardown
