@@ -54,30 +54,14 @@ if [[ $keep_app == 1 ]]; then
   echo "== keeping the installed app (CFBundleVersion $(defaults read "$app/Contents/Info" CFBundleVersion))"
 else
 echo "== build $sha on $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
-swiftpm=(--package-path app --scratch-path "$work/.build" --cache-path "$work/.swiftpm/cache"
-         --config-path "$work/.swiftpm/config" --security-path "$work/.swiftpm/security")
-taskpolicy -b nice -n 10 xcrun swift build "${swiftpm[@]}" --product XRealDesk 2>&1 | grep -E 'error|warning:|Compiling|Build' || true
-bin=$(xcrun swift build "${swiftpm[@]}" --show-bin-path)/XRealDesk
-[[ -x $bin ]] || { echo "build failed"; exit 1; }
-
-mkdir -p "$app/Contents/MacOS"
-cp "$bin" "$exe"
-cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>com.jerryfane.xrealdesk</string>
-  <key>CFBundleName</key><string>XRealDesk</string>
-  <key>CFBundleExecutable</key><string>XRealDesk</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
-  <key>CFBundleVersion</key><string>${sha:0:7}</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-</dict></plist>
-PLIST
-codesign --force --sign - --identifier com.jerryfane.xrealdesk "$app"
+set +e
+VERSION=${sha:0:7} taskpolicy -b nice -n 10 scripts/build-app.sh ~/xreal-desk -c debug \
+  --scratch-path "$work/.build" --cache-path "$work/.swiftpm/cache" \
+  --config-path "$work/.swiftpm/config" --security-path "$work/.swiftpm/security" 2>&1 |
+  grep -E 'error|warning:|Build|built'
+status=${PIPESTATUS[0]}
+set -e
+[[ $status == 0 ]] || { echo "build failed"; exit 1; }
 fi
 echo "== app: $app ($(codesign -dvvv "$app" 2>&1 | grep -E "^CDHash=" || true))"
 mkdir -p "$run"

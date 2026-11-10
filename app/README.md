@@ -69,3 +69,30 @@ display with `--output ID` (for example the glasses' display). Black is see-thro
 - No Accessibility permission is used yet.
 - On a Mac without a monitor (such as a headless Mac Studio), the virtual display replaces the system's placeholder
   display while it exists, so the desktop and any Screen Sharing view move onto it.
+
+## Testing on a Mac with the glasses
+
+Needs macOS 14+ and Xcode or the Command Line Tools (`xcode-select --install`). The glasses connect over USB-C; no
+driver. Everything below only sends the five read-only GETs.
+
+1. **Check the link.** `ping -c 3 169.254.2.1` must answer. If not: replug, and check System Settings › Network shows
+   the glasses' USB adapter with a 169.254.x.x address.
+2. **Head tracking, no permissions:**
+   ```sh
+   cd app && swift build -c release
+   .build/release/xreal-track live          # r + Enter recenters, q + Enter quits
+   ```
+   It prints firmware, serial and calibration, then yaw/pitch/roll at 10 Hz. Turn right: yaw goes up. Look up:
+   pitch goes up. Right ear down: roll goes up. Press the glasses' buttons and take them off: the events print.
+3. **The app:**
+   ```sh
+   scripts/build-app.sh                     # → build/XRealDesk.app
+   open build/XRealDesk.app --args --out /tmp/xreal-run
+   ```
+   An "XR" item appears in the menu bar; a window shows the side-by-side image. The first start needs Screen
+   Recording: System Settings › Privacy & Security › Screen & System Audio Recording › switch on XRealDesk, then
+   quit (XR › Quit) and open it again. Rebuilding the app needs the switch turned on again.
+4. **On the glasses:** find the glasses' display ID in `/tmp/xreal-run/log.txt` ("displays before: …"), then
+   `open build/XRealDesk.app --args --output <ID>` to fill that display with the side-by-side image.
+   Without side-by-side input mode (a SET command, milestone 1) the glasses show the 3840×1080 image squeezed into
+   1920×1080, so both eyes see both halves; head tracking and capture can still be checked on the window.

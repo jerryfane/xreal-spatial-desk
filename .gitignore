@@ -9,3 +9,4 @@ captures/*/control_gets.json
 app/.build/
 app/.swiftpm/
 studio-output/
+/build/

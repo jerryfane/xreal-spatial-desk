@@ -22,3 +22,10 @@ jobs:
       # The GlassesLink tests start tools/fake_glasses.py (python3) on 127.0.0.1:52998/52999.
       - name: Test
         run: swift test --package-path app --skip-build
+      - name: App bundle
+        if: runner.os == 'macOS'
+        run: |
+          scripts/build-app.sh
+          plutil -lint build/XRealDesk.app/Contents/Info.plist
+          codesign --verify --strict build/XRealDesk.app
+          build/XRealDesk.app/Contents/MacOS/XRealDesk --bad-option 2>&1 | grep -q 'usage\|XRealDesk \[--host'
