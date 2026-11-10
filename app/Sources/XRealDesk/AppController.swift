@@ -306,7 +306,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let id = display?.displayID
         display?.invalidate()
         display = nil
-        Log.line("quit: virtual display \(id.map(String.init) ?? "-") removed; displays now: \(describeDisplays())")
+        // WindowServer updates the display list asynchronously, so listing displays here would still show it.
+        Log.line("quit: virtual display \(id.map(String.init) ?? "-") released")
     }
 }
 
