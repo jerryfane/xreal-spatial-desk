@@ -11,6 +11,8 @@ in 3D as a side-by-side image.
 | `xreal-track` | CLI: `live`, `measure` (against `tools/fake_glasses.py`), `replay` (offline). |
 | `CVirtualDisplay` | Objective-C wrapper for the private `CGVirtualDisplay` API (macOS only). |
 | `XRealDesk` | Menu bar app (macOS 14+): one virtual display → ScreenCaptureKit → Metal 3840×1080 side-by-side render, placed with the head pose. |
+
+The package only builds requests from `GetCommand`, which lists the five GETs verified in BRIEF.md. There is no
 code path that sends a SET or any other command.
 
 ## Run
