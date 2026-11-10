@@ -41,6 +41,10 @@ final class DisplayModeController: @unchecked Sendable {
     private var link: GlassesLink?
     private var replies: [UInt32: SetReply] = [:]
     private var controlConnected = false
+    private var switchedThisRun = false
+
+    /// Whether this run ever sent side-by-side (so quitting must wait until the glasses have left it).
+    var modeWasSwitchedThisRun: Bool { lock.withLock { switchedThisRun } }
 
     func attach(_ link: GlassesLink) {
         lock.withLock { self.link = link }
@@ -75,6 +79,7 @@ final class DisplayModeController: @unchecked Sendable {
         do {
             let keeper = self.keeper
             let tx = try link.send(mode) { keeper.sent(mode, transactionID: $0) }
+            if mode == .sideBySide { lock.withLock { switchedThisRun = true } }
             Log.line("display mode: sent \(mode) (\(why)), tx \(tx): \(hex(mode.request(transactionID: tx).encoded()))")
             return tx
         } catch {
@@ -123,18 +128,25 @@ final class DisplayModeController: @unchecked Sendable {
         }
     }
 
-    /// Puts the original mode back and waits for the glasses to accept it. Safe to call when nothing was switched.
-    /// Returns once the glasses are seen back in the original mode (display size), not merely once the request is
-    /// accepted: the display changes ~2.4 s after the reply, and until then the caller must keep the glasses covered.
+    /// Puts the original mode back (if this run or a crashed one switched it) and returns only once the glasses are
+    /// not seen side-by-side any more, or after a timeout. Whether or not anything is sent here: a restore started
+    /// earlier (menu toggle) may have been accepted while the glasses are still re-enumerating (~2.4 s after the
+    /// reply), and until they finish the caller must keep them covered.
     func restoreBlocking(excluding virtual: CGDirectDisplayID?, timeout: TimeInterval = 3) {
-        guard let mode = keeper.restore() else { return }
-        let reply = sendAndWait(mode, why: "restore", timeout: timeout)
-        guard reply?.result == .accepted else {
-            Log.line("display mode: restore to \(mode) NOT confirmed; it is retried on the next start")
-            return
+        if let mode = keeper.restore() {
+            let reply = sendAndWait(mode, why: "restore", timeout: timeout)
+            if reply?.result != .accepted {
+                Log.line("display mode: restore to \(mode) NOT confirmed; it is retried on the next start")
+                return
+            }
         }
-        let back = DisplayModeController.waitForGlasses(mode, excluding: virtual, timeout: 6)
-        Log.line("display mode: glasses \(back.map { "back to \($0.description)" } ?? "not seen in \(mode) within 6 s: \(describeDisplays())")")
+        // Nothing switched by us and the glasses are side-by-side on their own: they stay so; nothing to wait for.
+        guard keeper.pendingRestore == nil, modeWasSwitchedThisRun else { return }
+        let deadline = Date(timeIntervalSinceNow: 6)
+        while Date() < deadline, GlassesDisplay.find(excluding: virtual)?.mode == .sideBySide {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        Log.line("display mode: on quit the glasses are \(GlassesDisplay.find(excluding: virtual)?.description ?? "not identified: \(describeDisplays())")")
     }
 
     /// Polls until the glasses display shows `mode` (the glasses re-enumerate after a switch).
