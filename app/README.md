@@ -75,8 +75,8 @@ display with `--output ID` (for example the glasses' display). Black is see-thro
 Needs macOS 14+ and Xcode or the Command Line Tools (`xcode-select --install`). The glasses connect over USB-C; no
 driver. Everything below only sends the five read-only GETs.
 
-1. **Check the link.** `ping -c 3 169.254.2.1` must answer. If not: replug, and check System Settings › Network shows
-   the glasses' USB adapter with a 169.254.x.x address.
+1. **Check the link.** `nc -z -G 2 169.254.2.1 52998 && echo ok` must print `ok`. If not: replug, and check System
+   Settings › Network shows the glasses' USB adapter with a 169.254.x.x address.
 2. **Head tracking, no permissions:**
    ```sh
    cd app && swift build -c release
