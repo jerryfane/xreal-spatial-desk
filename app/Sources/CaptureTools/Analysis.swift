@@ -192,6 +192,7 @@ public struct TrackingReport: Sendable {
         still = ["still_center", "still_end"].compactMap { name in
             guard let k = markers.firstIndex(where: { $0.name == name }), k + 1 < markers.count else { return nil }
             let r = track.range(markers[k].start, markers[k + 1].start)
+            guard !r.isEmpty else { return nil }  // recording ended before this step
             let n = track.index(atOrAfter: track.times[r.lowerBound] + 1) - r.lowerBound
             guard n > 0, r.count > n else { return nil }
             var best = r.lowerBound, bestSum = Double.infinity, sum = 0.0

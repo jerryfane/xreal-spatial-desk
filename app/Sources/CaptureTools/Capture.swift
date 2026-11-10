@@ -95,9 +95,9 @@ public struct Capture {
         let text = try Capture.text(dir, "frames.jsonl")
         var offsets: [Int64] = []
         for line in text.split(separator: "\n") {
-            guard line.contains("\"port\": 52998"), line.contains("\"dir\": \"rx\"") else { continue }
             let o = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
-            guard let t = (o?["t_ns"] as? NSNumber)?.int64Value, let hex = o?["hex"] as? String,
+            guard (o?["port"] as? NSNumber)?.intValue == 52998, o?["dir"] as? String == "rx",
+                  let t = (o?["t_ns"] as? NSNumber)?.int64Value, let hex = o?["hex"] as? String,
                   let bytes = [UInt8](hex: hex) else { continue }
             var decoder = FrameDecoder()
             guard let frame = try decoder.push(bytes).first, case .imu(let s)? = SensorMessage(frame) else { continue }

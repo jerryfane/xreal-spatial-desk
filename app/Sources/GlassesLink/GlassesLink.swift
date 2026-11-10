@@ -3,9 +3,9 @@ import XRealCore
 
 /// Both TCP connections to the glasses: sensor stream (52998) and control channel (52999).
 ///
-/// Each port has its own thread that connects, reads and reconnects with backoff until `stop()`. Events are
-/// delivered on those threads: sensor events (1000 Hz) on the sensor thread, control events on the control
-/// thread. Keep the handler short and thread-safe.
+/// Each port has its own thread that connects, reads and reconnects with backoff until `stop()` or until the link
+/// is released. Events are delivered on those threads: sensor events (1000 Hz) on the sensor thread, control events
+/// on the control thread. Keep the handler short and thread-safe. The handler may call `stop()`.
 ///
 /// Only the read-only GETs in `GetCommand` can be sent. On every control connection the link sends
 /// `Configuration.initialRequests` (by default all five).
@@ -46,54 +46,76 @@ public final class GlassesLink: @unchecked Sendable {
 
     public struct NotConnected: Error {}
 
-    public let configuration: Configuration
-    private let handler: @Sendable (Event) -> Void
+    // The worker threads retain only `core`, so releasing the last reference to the link runs `deinit` and stops them.
+    private let core: Core
+
+    public var configuration: Configuration { core.configuration }
+
+    public init(configuration: Configuration, handler: @escaping @Sendable (Event) -> Void) {
+        core = Core(configuration: configuration, handler: handler)
+    }
+
+    deinit { core.stop() }
+
+    public func start() { core.start() }
+
+    /// Closes both connections. Returns once both threads have exited; called from the handler, it returns once the
+    /// other thread has exited, and the calling thread ends after the handler returns.
+    public func stop() { core.stop() }
+
+    /// Sends a GET on the control connection. The reply arrives as `.control(.reply)` with this transaction ID.
+    @discardableResult
+    public func send(_ command: GetCommand) throws -> UInt32 { try core.send(command) }
+}
+
+private final class Core: @unchecked Sendable {
+    typealias Channel = GlassesLink.Channel
+
+    let configuration: GlassesLink.Configuration
+    private let handler: @Sendable (GlassesLink.Event) -> Void
     private let condition = NSCondition()
     private var running = false
     private var sockets: [Channel: TCPSocket] = [:]
-    private var threadsAlive = 0
+    private var workers: Set<ObjectIdentifier> = []
     private var nextTransactionID: UInt32 = 1
 
-    public init(configuration: Configuration, handler: @escaping @Sendable (Event) -> Void) {
+    init(configuration: GlassesLink.Configuration, handler: @escaping @Sendable (GlassesLink.Event) -> Void) {
         self.configuration = configuration
         self.handler = handler
     }
 
-    deinit { stop() }
-
-    public func start() {
+    func start() {
         condition.lock()
         defer { condition.unlock() }
-        guard !running, threadsAlive == 0 else { return }
+        guard !running, workers.isEmpty else { return }
         running = true
-        threadsAlive = 2
         for channel in [Channel.sensor, .control] {
             let thread = Thread { [self] in run(channel) }
             thread.name = "GlassesLink.\(channel.rawValue)"
             thread.qualityOfService = .userInteractive
+            workers.insert(ObjectIdentifier(thread))
             thread.start()
         }
     }
 
-    /// Closes both connections and returns once both threads have exited.
-    public func stop() {
+    func stop() {
         condition.lock()
         running = false
         for socket in sockets.values { socket.shutdown() }
         condition.broadcast()
-        while threadsAlive > 0 { condition.wait() }
+        // A worker cannot wait for itself (the handler may call stop()); it exits once its handler returns.
+        let me = ObjectIdentifier(Thread.current)
+        while !workers.subtracting([me]).isEmpty { condition.wait() }
         condition.unlock()
     }
 
-    /// Sends a GET on the control connection. The reply arrives as `.control(.reply)` with this transaction ID.
-    @discardableResult
-    public func send(_ command: GetCommand) throws -> UInt32 {
+    func send(_ command: GetCommand) throws -> UInt32 {
         condition.lock()
         let socket = sockets[.control]
         let tx = nextTransactionID
         nextTransactionID = nextTransactionID % 0x7FFF_FFFF + 1
         condition.unlock()
-        guard let socket else { throw NotConnected() }
+        guard let socket else { throw GlassesLink.NotConnected() }
         try socket.send(command.request(transactionID: tx).encoded())
         return tx
     }
@@ -107,7 +129,7 @@ public final class GlassesLink: @unchecked Sendable {
     private func run(_ channel: Channel) {
         defer {
             condition.lock()
-            threadsAlive -= 1
+            workers.remove(ObjectIdentifier(Thread.current))
             condition.broadcast()
             condition.unlock()
         }
@@ -143,7 +165,7 @@ public final class GlassesLink: @unchecked Sendable {
     private func read(_ socket: TCPSocket, _ channel: Channel) -> String {
         if channel == .control {
             do {
-                for command in configuration.initialRequests { try send(command) }
+                for command in configuration.initialRequests { _ = try send(command) }
             } catch {
                 return "sending GET requests: \(error)"
             }

@@ -78,6 +78,16 @@ final class HeadTrackerTests: XCTestCase {
         XCTAssertLessThan(abs(t.pose.roll), 1)
     }
 
+    func testStartsOnlyFromAGravityLikeSample() {
+        var t = HeadTracker(calibration: .identity)
+        // The head is level but accelerating sideways when the stream starts; that sample is not gravity.
+        t.update(IMUSample(timestampNs: 0, gyro: .zero, accel: Vec3(5, -HeadTracker.gravity, 0), temperature: 30))
+        XCTAssertFalse(t.isInitialized)
+        t.update(IMUSample(timestampNs: 1_000_000, gyro: .zero, accel: Vec3(0, -HeadTracker.gravity, 0), temperature: 30))
+        XCTAssertTrue(t.isInitialized)
+        XCTAssertEqual(t.pose.roll, 0, accuracy: 1e-9)
+    }
+
     func testRecenterZeroesYawAndKeepsTilt() {
         var t = HeadTracker(calibration: .identity)
         let q = spin(&t, from: .identity, rate: Vec3(0, 1, 0), seconds: 0.6)
@@ -119,6 +129,19 @@ final class HeadTrackerTests: XCTestCase {
             XCTAssertEqual(back.yaw, p.yaw, accuracy: 1e-9)
             XCTAssertEqual(back.pitch, p.pitch, accuracy: 1e-9)
             XCTAssertEqual(back.roll, p.roll, accuracy: 1e-9)
+        }
+    }
+
+    func testLookingStraightUpOrDownKeepsTheOrientation() {
+        // At pitch ±90° yaw and roll share an axis; the pose must still describe the same rotation.
+        let straightUp = [Quat(w: 0.5, x: 0.5, y: 0.5, z: -0.5),
+                          HeadPose(yaw: 30, pitch: 90, roll: 20).quaternion,
+                          HeadPose(yaw: -40, pitch: -90, roll: 70).quaternion]
+        for q in straightUp {
+            let back = HeadPose(q).quaternion
+            for v in [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)] {
+                XCTAssertEqual((back.rotate(v) - q.rotate(v)).length, 0, accuracy: 1e-6, "\(q)")
+            }
         }
     }
 }

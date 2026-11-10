@@ -18,15 +18,24 @@ public struct HeadPose: Equatable, Sendable {
 
     public init(_ q: Quat) {
         let w = q.w, x = q.x, y = q.y, z = q.z
+        let r00 = 1 - 2 * (y * y + z * z)
+        let r01 = 2 * (x * y - w * z)
         let r02 = 2 * (x * z + w * y)
         let r10 = 2 * (x * y + w * z)
         let r11 = 1 - 2 * (x * x + z * z)
         let r12 = 2 * (y * z - w * x)
         let r22 = 1 - 2 * (x * x + y * y)
         let deg = 180 / Double.pi
-        yaw = atan2(r02, r22) * deg
         pitch = asin(max(-1, min(1, -r12))) * deg
-        roll = atan2(r10, r11) * deg
+        if (r10 * r10 + r11 * r11).squareRoot() < 1e-9 {
+            // Looking straight up or down (cos pitch = 0): yaw and roll turn about the same axis. Put it all in yaw.
+            // There R = [[cos(y∓r), ±sin(y∓r), 0], …] for pitch = ±90°, with r12 = ∓1.
+            yaw = atan2(-r12 * r01, r00) * deg
+            roll = 0
+        } else {
+            yaw = atan2(r02, r22) * deg
+            roll = atan2(r10, r11) * deg
+        }
     }
 
     public var quaternion: Quat {
@@ -115,7 +124,9 @@ public struct HeadTracker: Sendable {
     }
 
     private mutating func initialize(accel: Vec3) {
-        guard accel.length > 1 else { return }
+        // Wait for a sample that looks like gravity alone, as the tilt correction does; a moving head would start
+        // tilted.
+        guard abs(accel.length - HeadTracker.gravity) < options.accelGate else { return }
         // At rest the accelerometer reads "up"; rotate head-frame down (−accel) onto world +Y, then drop any heading
         // so yaw starts at 0.
         let q = Quat(from: (-accel).normalized, to: Vec3(0, 1, 0))

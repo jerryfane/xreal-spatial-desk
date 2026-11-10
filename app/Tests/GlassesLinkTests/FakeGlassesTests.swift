@@ -103,6 +103,49 @@ final class FakeGlassesTests: XCTestCase {
         return fake
     }
 
+    /// Ports where nothing listens: the link keeps failing to connect and retrying.
+    static var unreachable: GlassesLink.Configuration {
+        var config = GlassesLink.Configuration(host: "127.0.0.1")
+        config.sensorPort = 1
+        config.controlPort = 2
+        config.maxReconnectDelay = 0.25
+        return config
+    }
+
+    func testHandlerCanStopTheLink() {
+        final class Box: @unchecked Sendable {
+            let lock = NSLock()
+            var link: GlassesLink?
+            /// Hands out the link once, to the first handler call that asks.
+            func take() -> GlassesLink? { lock.withLock { defer { link = nil }; return link } }
+        }
+        let box = Box()
+        let stopped = DispatchSemaphore(value: 0)
+        let link = GlassesLink(configuration: Self.unreachable) { event in
+            guard case .disconnected = event, let link = box.take() else { return }
+            link.stop()
+            stopped.signal()
+        }
+        box.lock.withLock { box.link = link }
+        link.start()
+        XCTAssertEqual(stopped.wait(timeout: .now() + 3), .success, "stop() from the handler returned")
+    }
+
+    func testReleasingTheLinkStopsItsThreads() {
+        let recorder = Recorder()
+        weak var weakLink: GlassesLink?
+        do {
+            let link = GlassesLink(configuration: Self.unreachable) { recorder.record($0) }
+            weakLink = link
+            link.start()
+            XCTAssertTrue(recorder.wait(timeout: 5) { events, _ in events.count >= 2 })
+        }
+        XCTAssertNil(weakLink, "the worker threads do not keep the link alive")
+        let count = recorder.snapshot.events.count
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(recorder.snapshot.events.count, count, "no reconnect attempts after release")
+    }
+
     func testStreamsGetRepliesAndEvents() throws {
         let fake = try startFake()
         defer { fake.stop() }
