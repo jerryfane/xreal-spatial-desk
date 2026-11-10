@@ -86,8 +86,9 @@ Needs macOS 14+. The glasses connect over USB-C; no driver. The app only sends t
 4. **Check.** The **XR** menu shows the head pose. Turn right: yaw goes up. Look up: pitch goes up. Right ear
    down: roll goes up. **Recenter** resets yaw. A window shows the side-by-side image of the virtual display.
    If the menu says "not connected", replug the glasses.
-5. **On the glasses.** In Terminal, `open /Applications/XRealDesk.app --args --out /tmp/xreal-run`; the glasses'
-   display ID is in `/tmp/xreal-run/log.txt` ("displays before: …"). Then
+5. **On the glasses.** Quit the app (**XR** › Quit): settings are read only at start, and `open` would otherwise
+   reuse the running copy. In Terminal, `open /Applications/XRealDesk.app --args --out /tmp/xreal-run`; the
+   glasses' display ID is in `/tmp/xreal-run/log.txt` ("displays before: …"). Quit again, then
    `open /Applications/XRealDesk.app --args --output <ID>` fills that display with the side-by-side image.
    Without side-by-side input mode (a SET command, milestone 1) the glasses show the 3840×1080 image squeezed into
    1920×1080, so both eyes see both halves; tracking, buttons, wear events and capture can still be checked.
@@ -97,8 +98,9 @@ Needs macOS 14+. The glasses connect over USB-C; no driver. The app only sends t
 ### Building it yourself
 
 With Xcode or the Command Line Tools (`xcode-select --install`): `scripts/build-app.sh` builds `build/XRealDesk.app`.
-For a live 10 Hz pose readout in Terminal: `cd app && swift build -c release && .build/release/xreal-track live`
-(`r` + Enter recenters, `q` + Enter quits).
+For a live 10 Hz pose readout in Terminal, from the repository root:
+`swift build --package-path app -c release && app/.build/release/xreal-track live` (`r` + Enter recenters, `q` +
+Enter quits).
 
 Releases are built by CI: pushing a tag `v*` publishes `XRealDesk.zip`. Every pull request's CI run also has the
 zip as a downloadable artifact.
