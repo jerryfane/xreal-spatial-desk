@@ -163,30 +163,33 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// Places the side-by-side image per `RenderTarget.choose`: on the glasses whenever they are (or are being
-    /// switched to) side-by-side, even over --output; else on --output or in a half-size preview window. Re-run on every
-    /// display change, because the glasses re-appear 3840 px wide after a switch. Returns the display now covered.
+    /// switched to) side-by-side, or a switch back is owed, even over --output; else on --output or in a half-size
+    /// preview window. Called on every display change and every second (`tick`); it moves the window only when the
+    /// target or the target screen's frame changed, so whatever cleared or set a condition, the next call reconciles.
+    /// Returns the display now covered.
     @discardableResult
     private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
         guard let window = renderWindow else { return nil }
         let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
         if forceGlasses == nil, let mode = glasses?.mode { modes.keeper.glassesObserved(mode) }
-        // Keep the glasses covered while side-by-side is wanted, while they show it, and while a switch back (this
-        // run's or a crashed run's) is accepted but not yet visible.
         let target = RenderTarget.choose(outputDisplay: options.outputDisplay, glassesDisplay: glasses?.id,
                                          glassesSideBySide: glasses?.mode == .sideBySide,
                                          sideBySideWanted: forceGlasses != nil || sideBySideOn
                                              || modes.keeper.awaitingPhysicalRestore != nil)
         if case .display(let id) = target, let screen = NSScreen.screens.first(where: { $0.displayID == id }) {
-            window.styleMask = [.borderless]
-            window.level = .screenSaver
-            window.setFrame(screen.frame, display: true)
-            window.orderFrontRegardless()
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKey()
-            Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
+            let alreadyThere = window.level == .screenSaver && window.frame == screen.frame
+            if !alreadyThere {
+                window.styleMask = [.borderless]
+                window.level = .screenSaver
+                window.setFrame(screen.frame, display: true)
+                window.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKey()
+                Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
+            }
             return id
         }
-        if case .display(let id) = target {
+        if case .display(let id) = target, reason != "periodic check" {
             Log.line("renderer: display \(id) not among screens (\(reason)); \(describeDisplays())")
         }
         let alreadyPreview = window.level == .normal && window.styleMask.contains(.titled)
@@ -354,12 +357,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         lastStats = (now, captured, rendered)
         (contentWindow?.contentView as? TestPatternView)?.needsDisplay = true
-        // A restore's acceptance can arrive after the display already changed (no further screen notification then):
-        // re-observe once a second while a switch back is owed, and re-place when it completes.
-        if modes.keeper.awaitingPhysicalRestore != nil {
-            if let mode = GlassesDisplay.find(excluding: display?.displayID)?.mode { modes.keeper.glassesObserved(mode) }
-            if modes.keeper.awaitingPhysicalRestore == nil { placeRenderWindow(reason: "glasses back in their original mode") }
-        }
+        // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
+        // target with no screen notification after them (e.g. a restore accepted after the display already changed).
+        placeRenderWindow(reason: "periodic check")
         updateStatus()
     }
 
