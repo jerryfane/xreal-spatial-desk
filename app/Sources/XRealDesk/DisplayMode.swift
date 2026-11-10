@@ -73,8 +73,8 @@ final class DisplayModeController: @unchecked Sendable {
     func send(_ mode: DisplayInputMode, why: String) -> UInt32? {
         guard let link = lock.withLock({ link }) else { return nil }
         do {
-            let tx = try link.send(mode)
-            keeper.sent(mode, transactionID: tx)
+            let keeper = self.keeper
+            let tx = try link.send(mode) { keeper.sent(mode, transactionID: $0) }
             Log.line("display mode: sent \(mode) (\(why)), tx \(tx): \(hex(mode.request(transactionID: tx).encoded()))")
             return tx
         } catch {
@@ -124,12 +124,17 @@ final class DisplayModeController: @unchecked Sendable {
     }
 
     /// Puts the original mode back and waits for the glasses to accept it. Safe to call when nothing was switched.
-    func restoreBlocking(timeout: TimeInterval = 3) {
+    /// Returns once the glasses are seen back in the original mode (display size), not merely once the request is
+    /// accepted: the display changes ~2.4 s after the reply, and until then the caller must keep the glasses covered.
+    func restoreBlocking(excluding virtual: CGDirectDisplayID?, timeout: TimeInterval = 3) {
         guard let mode = keeper.restore() else { return }
         let reply = sendAndWait(mode, why: "restore", timeout: timeout)
-        if reply?.result != .accepted {
+        guard reply?.result == .accepted else {
             Log.line("display mode: restore to \(mode) NOT confirmed; it is retried on the next start")
+            return
         }
+        let back = DisplayModeController.waitForGlasses(mode, excluding: virtual, timeout: 6)
+        Log.line("display mode: glasses \(back.map { "back to \($0.description)" } ?? "not seen in \(mode) within 6 s: \(describeDisplays())")")
     }
 
     /// Polls until the glasses display shows `mode` (the glasses re-enumerate after a switch).

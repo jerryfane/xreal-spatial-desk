@@ -70,8 +70,14 @@ public final class GlassesLink: @unchecked Sendable {
     public func send(_ command: GetCommand) throws -> UInt32 { try core.send(command.request(transactionID:)) }
 
     /// Switches the display input mode. The reply arrives as `.control(.setReply)` with this transaction ID.
+    /// `register` is called with the transaction ID before anything is written, so a fast reply always finds it.
     @discardableResult
-    public func send(_ mode: DisplayInputMode) throws -> UInt32 { try core.send(mode.request(transactionID:)) }
+    public func send(_ mode: DisplayInputMode, register: (UInt32) -> Void = { _ in }) throws -> UInt32 {
+        try core.send { tx in
+            register(tx)
+            return mode.request(transactionID: tx)
+        }
+    }
 }
 
 private final class Core: @unchecked Sendable {

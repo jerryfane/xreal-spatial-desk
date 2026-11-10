@@ -147,8 +147,13 @@ final class AppController: NSObject, NSApplicationDelegate {
                 updateStatus()
                 return
             }
-            // Cover the glasses with our image before they switch, so neither eye ever sees half a desktop.
-            placeRenderWindow(reason: "side-by-side on", forceGlasses: glasses)
+            // Cover the glasses with our image before they switch, so neither eye ever sees half a desktop. If they
+            // cannot be covered (no renderer, screen not found), do not switch.
+            guard placeRenderWindow(reason: "side-by-side on", forceGlasses: glasses) == glasses.id else {
+                Log.line("display mode: could not cover the glasses with the image; side-by-side not switched on")
+                updateStatus()
+                return
+            }
             _ = modes.switchTo(.sideBySide, glasses: glasses)
         } else if let mode = modes.keeper.restore() {
             // The window stays on the glasses until they report regular mode again (placeRenderWindow on the change).
@@ -157,28 +162,31 @@ final class AppController: NSObject, NSApplicationDelegate {
         updateStatus()
     }
 
-    /// Where the side-by-side image goes: full screen on the glasses whenever they are (or are being switched to)
-    /// side-by-side, or with --output; otherwise a half-size preview window. Re-run on every display change, because
-    /// the glasses re-appear 3840 px wide after a switch.
-    private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) {
-        guard let window = renderWindow else { return }
+    /// Places the side-by-side image per `RenderTarget.choose`: on the glasses whenever they are (or are being
+    /// switched to) side-by-side, even over --output; else on --output or in a half-size preview window. Re-run on every
+    /// display change, because the glasses re-appear 3840 px wide after a switch. Returns the display now covered.
+    @discardableResult
+    private func placeRenderWindow(reason: String, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
+        guard let window = renderWindow else { return nil }
         let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
-        let wantsGlasses = forceGlasses != nil || glasses?.mode == .sideBySide || sideBySideOn
-        let targetID = options.outputDisplay ?? (wantsGlasses ? glasses?.id : nil)
-        if let targetID, let screen = NSScreen.screens.first(where: { $0.displayID == targetID }) {
+        let target = RenderTarget.choose(outputDisplay: options.outputDisplay, glassesDisplay: glasses?.id,
+                                         glassesSideBySide: glasses?.mode == .sideBySide,
+                                         sideBySideWanted: forceGlasses != nil || sideBySideOn)
+        if case .display(let id) = target, let screen = NSScreen.screens.first(where: { $0.displayID == id }) {
             window.styleMask = [.borderless]
             window.level = .screenSaver
             window.setFrame(screen.frame, display: true)
             window.orderFrontRegardless()
             NSApp.activate(ignoringOtherApps: true)
             window.makeKey()
-            Log.line("renderer: full screen on display \(targetID) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
-        } else {
-            if wantsGlasses {
-                Log.line("renderer: glasses display not among screens yet (\(reason)); \(describeDisplays())")
-            }
-            let alreadyPreview = window.level == .normal && window.styleMask.contains(.titled)
-            guard !alreadyPreview else { return }
+            Log.line("renderer: full screen on display \(id) (\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt; \(reason)); Esc quits")
+            return id
+        }
+        if case .display(let id) = target {
+            Log.line("renderer: display \(id) not among screens (\(reason)); \(describeDisplays())")
+        }
+        let alreadyPreview = window.level == .normal && window.styleMask.contains(.titled)
+        if !alreadyPreview {
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.level = .normal
             window.title = "XReal Desk: side-by-side 3840×1080 (shown at half size)"
@@ -189,6 +197,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             window.orderFrontRegardless()
             Log.line("renderer: preview window (\(reason))")
         }
+        return nil
     }
 
     /// Side-by-side is "on" while this run has the glasses switched away from their original mode.
@@ -379,10 +388,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func shutdown() {
+        // Put the glasses' display mode back first, while the control connection is still up, and keep the image on
+        // them until they are seen back in their original mode, so neither eye sees half a desktop meanwhile.
+        modes.restoreBlocking(excluding: display?.displayID)
         renderWindow?.orderOut(nil)
         contentWindow?.orderOut(nil)
-        // Put the glasses' display mode back first, while the control connection is still up.
-        modes.restoreBlocking()
         link?.stop()
         if let capture {
             let done = DispatchSemaphore(value: 0)
