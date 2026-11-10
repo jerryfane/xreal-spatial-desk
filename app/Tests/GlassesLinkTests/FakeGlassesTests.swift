@@ -112,23 +112,38 @@ final class FakeGlassesTests: XCTestCase {
         return config
     }
 
-    func testHandlerCanStopTheLink() {
-        final class Box: @unchecked Sendable {
+    func testBothHandlersCanStopTheLinkAtOnce() {
+        // Both connections fail; each channel's handler calls stop() on its first disconnect, after waiting until the
+        // other handler is also in the callback, so the two stop() calls overlap.
+        final class Shared: @unchecked Sendable {
             let lock = NSLock()
             var link: GlassesLink?
-            /// Hands out the link once, to the first handler call that asks.
-            func take() -> GlassesLink? { lock.withLock { defer { link = nil }; return link } }
+            var arrived: Set<String> = []
+            let bothArrived = DispatchSemaphore(value: 0)
+            let returned = DispatchSemaphore(value: 0)
         }
-        let box = Box()
-        let stopped = DispatchSemaphore(value: 0)
+        let s = Shared()
         let link = GlassesLink(configuration: Self.unreachable) { event in
-            guard case .disconnected = event, let link = box.take() else { return }
-            link.stop()
-            stopped.signal()
+            guard case .disconnected(let channel, _) = event else { return }
+            let (first, both) = s.lock.withLock { () -> (Bool, Bool) in
+                let first = s.arrived.insert(channel.rawValue).inserted
+                return (first, s.arrived.count == 2)
+            }
+            guard first else { return }
+            if both { s.bothArrived.signal(); s.bothArrived.signal() }
+            _ = s.bothArrived.wait(timeout: .now() + 3)
+            s.lock.withLock { s.link }?.stop()
+            s.returned.signal()
         }
-        box.lock.withLock { box.link = link }
+        s.lock.withLock { s.link = link }
         link.start()
-        XCTAssertEqual(stopped.wait(timeout: .now() + 3), .success, "stop() from the handler returned")
+        XCTAssertEqual(s.returned.wait(timeout: .now() + 5), .success, "first handler's stop() returned")
+        XCTAssertEqual(s.returned.wait(timeout: .now() + 5), .success, "second handler's stop() returned")
+        XCTAssertEqual(s.lock.withLock { s.arrived.count }, 2, "both handlers were in stop() together")
+        let t = Date()
+        link.stop()  // from outside: joins the (already finishing) workers
+        XCTAssertLessThan(Date().timeIntervalSince(t), 2)
+        s.lock.withLock { s.link = nil }
     }
 
     func testReleasingTheLinkStopsItsThreads() {

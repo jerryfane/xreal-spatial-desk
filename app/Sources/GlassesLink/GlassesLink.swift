@@ -59,8 +59,10 @@ public final class GlassesLink: @unchecked Sendable {
 
     public func start() { core.start() }
 
-    /// Closes both connections. Returns once both threads have exited; called from the handler, it returns once the
-    /// other thread has exited, and the calling thread ends after the handler returns.
+    /// Closes both connections. From any other thread it returns once both worker threads have exited. From the
+    /// handler (a worker thread) it only signals the shutdown and returns at once: waiting there could deadlock with
+    /// the other worker's handler doing the same. No events are delivered after the workers see the signal, except
+    /// from a handler call already in progress.
     public func stop() { core.stop() }
 
     /// Sends a GET on the control connection. The reply arrives as `.control(.reply)` with this transaction ID.
@@ -103,9 +105,9 @@ private final class Core: @unchecked Sendable {
         running = false
         for socket in sockets.values { socket.shutdown() }
         condition.broadcast()
-        // A worker cannot wait for itself (the handler may call stop()); it exits once its handler returns.
-        let me = ObjectIdentifier(Thread.current)
-        while !workers.subtracting([me]).isEmpty { condition.wait() }
+        if !workers.contains(ObjectIdentifier(Thread.current)) {
+            while !workers.isEmpty { condition.wait() }
+        }
         condition.unlock()
     }
 
