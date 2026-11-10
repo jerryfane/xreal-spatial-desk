@@ -51,7 +51,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         startRenderer()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
                                                queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.placeRenderWindow(reason: "displays changed") }
+            MainActor.assumeIsolated { _ = self?.placeRenderWindow(reason: "displays changed") }
         }
         if options.sbs { setSideBySide(true) }
         makeStatusItem()
