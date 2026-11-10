@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build XRealDesk.app on the Mac Studio and run it in the owner's GUI session, from a Linux seat.
 #
+#   scripts/studio-app.sh build [commit]            # compile and bundle only; nothing is launched
 #   scripts/studio-app.sh probe [commit]            # 10 s: create the virtual display, list displays, remove it
 #   scripts/studio-app.sh run [commit]              # 60 s against tools/fake_glasses.py; PNG snapshots
 #   scripts/studio-app.sh crash [commit]            # start, kill -9 after 8 s, check the virtual display is gone
@@ -11,7 +12,7 @@
 # OUT (default ./studio-output/<commit>-<mode>/).
 set -euo pipefail
 
-mode=${1:?usage: studio-app.sh probe|run|crash [commit]}
+mode=${1:?usage: studio-app.sh build|probe|run|crash [commit]}
 sha=$(git rev-parse --verify "${2:-HEAD}^{commit}")
 studio=${STUDIO:-jerry@100.111.92.43}
 out=${OUT:-studio-output/$sha-$mode}
@@ -76,6 +77,10 @@ launch() {  # args for the app; returns once `open` has launched it (or, with -W
 
 echo "== displays before: $(displays)"
 case $mode in
+  build)
+    echo "== build only; nothing launched"
+    exit 0
+    ;;
   probe)
     appargs=(--probe --seconds 10)
     echo "== app start UTC $(date -u +%FT%TZ)"

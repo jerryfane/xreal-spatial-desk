@@ -156,12 +156,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         capture.onStop = { error in Log.line("capture: stopped: \(error)") }
         let id = display.displayID, w = options.displayWidth, h = options.displayHeight
+        let own = Set([renderWindow?.windowNumber].compactMap { $0 })
         Task { @MainActor in
-            placeContentWindow()
+            await placeContentWindow()
             do {
-                try await capture.start(displayID: id, width: w, height: h)
+                try await capture.start(displayID: id, width: w, height: h, excluding: own)
                 self.captureStatus = "Capture: running"
-                Log.line("capture: started on display \(id)")
+                Log.line("capture: started on display \(id) (excluding our render window)")
             } catch {
                 self.captureStatus = "Capture: failed (see log)"
                 Log.line("capture: FAILED: \(error)")
@@ -170,17 +171,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A window on the virtual display, so the captured content is recognisable and keeps changing.
-    private func placeContentWindow() {
-        guard let id = display?.displayID, let screen = NSScreen.screens.first(where: { $0.displayID == id }) else {
-            Log.line("content window: virtual display not among NSScreens yet")
+    /// A window on the virtual display, so the captured content is recognisable and keeps changing. On a Mac without
+    /// a monitor the virtual display is the only one and also holds the render window; then the pattern takes the
+    /// lower half so it does not cover the render window (an occluded window gets fewer frames).
+    private func placeContentWindow() async {
+        guard let id = display?.displayID else { return }
+        var screen: NSScreen?
+        for _ in 0..<30 {
+            screen = NSScreen.screens.first { $0.displayID == id }
+            if screen != nil { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard let screen else {
+            Log.line("content window: virtual display \(id) not among NSScreens")
             return
         }
-        let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView = TestPatternView(frame: NSRect(origin: .zero, size: screen.frame.size), displayID: id)
+        var frame = screen.frame
+        if renderWindow?.screen == screen {
+            frame.size.height /= 2
+            Log.line("content window: virtual display is also the render window's screen (\(NSScreen.screens.count) screen(s)); using its lower half")
+        }
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = TestPatternView(frame: NSRect(origin: .zero, size: frame.size), displayID: id)
         window.isReleasedWhenClosed = false
-        window.setFrame(screen.frame, display: true)
+        window.setFrame(frame, display: true)
         window.orderFrontRegardless()
+        renderWindow?.orderFrontRegardless()
         contentWindow = window
     }
 

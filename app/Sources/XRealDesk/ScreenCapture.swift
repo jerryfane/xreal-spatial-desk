@@ -59,17 +59,20 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     var latestFrame: Frame? { lock.withLock { latest } }
     var framesReceived: Int { lock.withLock { frameCount } }
 
-    /// Starts capturing `displayID` at its native pixel size. A just-created display can take a moment to become
-    /// shareable, so this retries for a few seconds.
-    func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int = 60) async throws {
+    /// Starts capturing `displayID` at its native pixel size, leaving out the windows in `excluding` (window
+    /// numbers, e.g. our own render window, which would otherwise feed back into itself). A just-created display can
+    /// take a moment to become shareable, so this retries for a few seconds.
+    func start(displayID: CGDirectDisplayID, width: Int, height: Int, excluding: Set<Int> = [], fps: Int = 60) async throws {
         var display: SCDisplay?
+        var content: SCShareableContent?
         for _ in 0..<25 {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            display = content.displays.first { $0.displayID == displayID }
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            display = content?.displays.first { $0.displayID == displayID }
             if display != nil { break }
             try await Task.sleep(nanoseconds: 200_000_000)
         }
-        guard let display else { throw CaptureError.displayNotShareable(displayID) }
+        guard let display, let content else { throw CaptureError.displayNotShareable(displayID) }
+        let excluded = content.windows.filter { excluding.contains(Int($0.windowID)) }
 
         let config = SCStreamConfiguration()
         config.width = width
@@ -78,7 +81,7 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         config.queueDepth = 5
         config.showsCursor = true
-        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: self)
+        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: excluded), configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
         lock.withLock { self.stream = stream }
