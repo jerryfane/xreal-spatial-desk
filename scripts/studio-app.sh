@@ -5,6 +5,7 @@
 #   scripts/studio-app.sh probe [commit]            # 10 s: create the virtual display, list displays, remove it
 #   scripts/studio-app.sh run [commit]              # 60 s against tools/fake_glasses.py; PNG snapshots
 #   scripts/studio-app.sh crash [commit]            # start, kill -9 after 8 s, check the virtual display is gone
+#   scripts/studio-app.sh term [commit]             # start, SIGTERM (as Ctrl-C/logout would) after 8 s, same check
 #
 # Footprint agreed with the macserve owner (gitmoot 446303/446319): account jerry, ~/xreal-desk only, ad-hoc signed
 # app at the stable path ~/xreal-desk/XRealDesk.app (one Screen Recording entry), nothing installed, fake glasses
@@ -12,7 +13,7 @@
 # OUT (default ./studio-output/<commit>-<mode>/).
 set -euo pipefail
 
-mode=${1:?usage: studio-app.sh build|probe|run|crash [commit]}
+mode=${1:?usage: studio-app.sh build|probe|run|crash|term [commit]}
 sha=$(git rev-parse --verify "${2:-HEAD}^{commit}")
 studio=${STUDIO:-jerry@100.111.92.43}
 out=${OUT:-studio-output/$sha-$mode}
@@ -41,7 +42,9 @@ cleanup() {
   if lsof -nP -iTCP:52998 -iTCP:52999 -sTCP:LISTEN; then echo "LISTENER LEFT ON 52998/52999" >&2; exit 1; fi
 }
 trap cleanup EXIT
-displays() { system_profiler SPDisplaysDataType 2>/dev/null | grep -c 'Resolution:' || true; }
+# Display names as System Information lists them; ours is "XReal Desk".
+displays() { system_profiler SPDisplaysDataType 2>/dev/null | awk '/^ {8}[^ ].*:$/ {sub(/^ +/, ""); sub(/:$/, ""); printf "%s; ", $0}'; }
+ours_gone() { ! system_profiler SPDisplaysDataType 2>/dev/null | grep -q 'XReal Desk:'; }
 
 echo "== build $sha on $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
 swiftpm=(--package-path app --scratch-path "$work/.build" --cache-path "$work/.swiftpm/cache"
@@ -87,7 +90,7 @@ case $mode in
     launch -n -W
     echo "== app end UTC $(date -u +%FT%TZ)"
     ;;
-  run|crash)
+  run|crash|term)
     mkfifo "$work/fake.stdin"
     exec 3<>"$work/fake.stdin"
     python3 -u tools/fake_glasses.py captures/20261110-140512 --loop <&3 >"$run/fake.log" 2>&1 &
@@ -105,11 +108,14 @@ case $mode in
       sleep 8
       echo "== displays while running: $(displays)"
       pid=$(pgrep -f "^$exe" | head -1)
-      echo "== kill -9 $pid at UTC $(date -u +%FT%TZ)"
-      kill -9 "$pid"
-      sleep 3
+      sig=$([[ $mode == crash ]] && echo KILL || echo TERM)
+      echo "== kill -$sig $pid at UTC $(date -u +%FT%TZ)"
+      kill -s "$sig" "$pid"
+      for _ in $(seq 20); do pgrep -f "^$exe" >/dev/null || break; sleep 0.25; done
+      sleep 2
       echo "== app end UTC $(date -u +%FT%TZ)"
     fi
+    if ours_gone; then echo "== RESULT virtual display removed after $mode"; else echo "== RESULT VIRTUAL DISPLAY STILL PRESENT after $mode"; fi
     ;;
 esac
 echo "== displays after: $(displays)"
