@@ -46,6 +46,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var statusLines: [NSMenuItem] = []
     private var permissionRequested = false
+    /// The last arrangement asked of macOS, as display ID → [x, y]; asked again only when it changes.
+    private var requestedArrangement: [UInt32: [Int]] = [:]
+    /// Serial number for the next virtual display: a re-created screen (new resolution) gets a new one, so it is
+    /// never confused with the display being torn down.
+    private var nextSerial: UInt32 = 1
     private var signalSources: [DispatchSourceSignal] = []
     private var lastStats = (time: 0.0, captured: 0, rendered: 0)
     private var fps = (capture: 0.0, render: 0.0)
@@ -152,8 +157,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // About 81 dpi, as a 27-inch 1080p monitor; macOS uses it only for its own defaults.
             let mm = CGSize(width: Double(s.pixelWidth) * 0.3125, height: Double(s.pixelHeight) * 0.3125)
             let d = try XRVirtualDisplay(name: "XReal Desk \(s.id)", width: UInt(s.pixelWidth), height: UInt(s.pixelHeight),
-                                         refreshRate: 60, hiDPI: false, sizeInMillimeters: mm, serialNumber: UInt32(s.id),
+                                         refreshRate: 60, hiDPI: false, sizeInMillimeters: mm, serialNumber: nextSerial,
                                          terminated: { Log.line("virtual display: screen \(s.id) terminated by the system") })
+            nextSerial += 1
             guard d.displayID != kCGNullDirectDisplay else {
                 Log.line("virtual display: screen \(s.id) FAILED: no display id")
                 return nil
@@ -176,7 +182,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Puts our displays in macOS's arrangement the way they sit around the head (see `DisplayArrangement`), for this
-    /// login session only. Does nothing until every display has appeared, or when they are already in place.
+    /// login session only. Does nothing until every display has appeared. Asks again only when the wanted arrangement
+    /// changes (layout, displays, sizes): if macOS adjusts it, or the user rearranges in System Settings, that stays.
     private func arrangeDisplays() {
         let ours = Set(slots.values.map(\.displayID))
         guard !ours.isEmpty else { return }
@@ -193,6 +200,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return DisplayArrangement.Item(id: id, yaw: s.yaw, pitch: s.pitch, width: Int(b.width), height: Int(b.height))
         }
         let origins = DisplayArrangement.origins(items, rightOf: (Int(box.minX), Int(box.minY), Int(box.width), Int(box.height)))
+        let request = origins.mapValues { [$0.x, $0.y] }
+        guard request != requestedArrangement else { return }
+        requestedArrangement = request
         let moves = origins.filter { id, o in
             let b = CGDisplayBounds(id)
             return Int(b.minX) != o.x || Int(b.minY) != o.y
