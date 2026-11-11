@@ -70,6 +70,9 @@ the glasses' display). Black is see-through on the glasses.
   layouts. The current and saved layouts are kept in `~/Library/Application Support/XRealDesk/layouts.json`; an
   unreadable file is renamed `layouts.json.bad` and the app starts with one screen. `--layout NAME` starts with a
   given layout.
+- If macOS mirrors the glasses (or any other display) with one of the app's screens, the app undoes that mirror once
+  per display pair (for the session): a mirrored glasses display shows that screen instead of the 3D image and cannot
+  be switched to side-by-side. Every display change is logged with each display's state.
 - macOS's display arrangement follows the layout (for the session): the row left to right in yaw order, right of
   your other displays; screens above or below the row above or below it. So the pointer leaves one screen for the
   next the way they sit around you.
