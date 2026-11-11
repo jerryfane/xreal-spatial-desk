@@ -76,14 +76,55 @@ struct GlassesDisplay: Equatable {
         return ids.prefix(Int(count)).map { id in
             let m = CGDisplayCopyDisplayMode(id)
             let skip: String?
+            let mirrors = CGDisplayMirrorsDisplay(id)
             if OwnDisplays.contains(id) { skip = "ours" }
             else if CGDisplayIsBuiltin(id) != 0 { skip = "built-in" }
+            else if mirrors != kCGNullDirectDisplay { skip = "mirrors display \(mirrors)" }
             else if CGDisplayIsActive(id) == 0 { skip = "inactive" }
             else if let m, m.pixelHeight == 1080, m.pixelWidth == 1920 || m.pixelWidth == 3840 { skip = nil }
             else { skip = "not 1920/3840x1080" }
             let candidate = skip == nil ? m.map { GlassesDisplay(id: id, pixelWidth: $0.pixelWidth, pixelHeight: $0.pixelHeight) } : nil
             return (id, m, skip, candidate)
         }
+    }
+}
+
+/// Undoes macOS mirroring between one of our virtual displays and another display (the glasses mirroring one of our
+/// screens shows that screen instead of our image, and leaves no glasses display to switch to side-by-side). Each
+/// pair is undone at most once per run, so a mirror the user sets up again on purpose is left alone; a failed attempt
+/// does not count and is retried at most every 10 s. Session only.
+enum MirrorGuard {
+    private static var undone: Set<[CGDirectDisplayID]> = []
+    private static var retryAfter: [[CGDirectDisplayID]: Date] = [:]
+
+    static func check() {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return }
+        let now = Date()
+        let pairs = ids.prefix(Int(count)).compactMap { id -> [CGDirectDisplayID]? in
+            let source = CGDisplayMirrorsDisplay(id)
+            guard source != kCGNullDirectDisplay, OwnDisplays.contains(id) != OwnDisplays.contains(source) else { return nil }
+            return [id, source]
+        }.filter { !undone.contains($0) && (retryAfter[$0].map { now >= $0 } ?? true) }
+        guard !pairs.isEmpty else { return }
+        let described = pairs.map { "\($0[0]) mirrored \($0[1])" }.joined(separator: ", ")
+        func failed(_ why: String) {
+            for p in pairs { retryAfter[p] = now.addingTimeInterval(10) }
+            Log.line("mirroring: \(described): \(why); retrying in 10 s")
+        }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return failed("could not begin configuration") }
+        for pair in pairs where CGConfigureDisplayMirrorOfDisplay(config, pair[0], kCGNullDirectDisplay) != .success {
+            CGCancelDisplayConfiguration(config)
+            return failed("could not unmirror \(pair[0])")
+        }
+        let result = CGCompleteDisplayConfiguration(config, .forSession)
+        guard result == .success else { return failed("FAILED (\(result.rawValue))") }
+        undone.formUnion(pairs)
+        for p in pairs { retryAfter[p] = nil }
+        Log.line("mirroring: \(described): undone")
     }
 }
 

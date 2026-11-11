@@ -109,16 +109,23 @@ enum Log {
     }
 }
 
-/// Active displays as "id WxH (main|virtual)" for the log; "virtual" marks ours.
+/// Online displays for the log: "id WxH" plus main, virtual (ours), built-in, inactive, asleep, mirrors N, vendor.
+/// Lists online rather than active displays: a mirrored or inactive display is missing from the active list.
 func describeDisplays() -> String {
     var count: UInt32 = 0
-    CGGetActiveDisplayList(0, nil, &count)
+    CGGetOnlineDisplayList(0, nil, &count)
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-    CGGetActiveDisplayList(count, &ids, &count)
-    return "\(count) active: " + ids.map { id in
+    CGGetOnlineDisplayList(count, &ids, &count)
+    return "\(count) online: " + ids.prefix(Int(count)).map { id in
         var s = "\(id) \(CGDisplayPixelsWide(id))x\(CGDisplayPixelsHigh(id))"
         if CGDisplayIsMain(id) != 0 { s += " main" }
         if OwnDisplays.contains(id) { s += " virtual" }
+        if CGDisplayIsBuiltin(id) != 0 { s += " built-in" }
+        if CGDisplayIsActive(id) == 0 { s += " inactive" }
+        if CGDisplayIsAsleep(id) != 0 { s += " asleep" }
+        let mirrors = CGDisplayMirrorsDisplay(id)
+        if mirrors != kCGNullDirectDisplay { s += " mirrors \(mirrors)" }
+        s += String(format: " vendor 0x%04x", CGDisplayVendorNumber(id))
         return s
     }.joined(separator: ", ")
 }

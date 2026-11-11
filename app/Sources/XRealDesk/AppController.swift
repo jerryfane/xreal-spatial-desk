@@ -96,6 +96,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 OwnDisplays.pruneRetired()
+                Log.line("displays changed: \(describeDisplays())")
+                MirrorGuard.check()
                 _ = self?.placeRenderWindow(.displaysChanged)
                 self?.arrangeDisplays()
             }
@@ -696,6 +698,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
         // target with no screen notification after them (e.g. a restore accepted after the display already changed).
         OwnDisplays.pruneRetired()
+        MirrorGuard.check()
         reconcileSbsProblem()
         placeRenderWindow(.periodicCheck)
         updateStatus()
