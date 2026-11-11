@@ -49,33 +49,40 @@ struct GlassesDisplay: Equatable {
 
     /// The single display that looks like the glasses, or nil (none, or several, which would be a guess). Our own
     /// virtual displays are skipped (`OwnDisplays`).
-    static func find() -> GlassesDisplay? { search().glasses }
+    static func find() -> GlassesDisplay? {
+        let c = online().compactMap(\.candidate)
+        return c.count == 1 ? c[0] : nil
+    }
 
     /// `find`, plus a short reason when it finds nothing, naming every display and why it was or was not taken.
+    /// Only for an explicit attempt: it formats a report for every display.
     static func search() -> (glasses: GlassesDisplay?, why: String) {
+        let all = online()
+        let candidates = all.compactMap(\.candidate)
+        if candidates.count == 1 { return (candidates[0], "") }
+        let list = all.map { d in
+            let size = d.mode.map { "\($0.pixelWidth)x\($0.pixelHeight)" } ?? "no mode"
+            return "\(d.id) \(size) vendor \(String(format: "0x%04x", CGDisplayVendorNumber(d.id))): \(d.skip ?? "candidate")"
+        }.joined(separator: "; ")
+        return (nil, candidates.isEmpty ? "no glasses display (\(list))" : "\(candidates.count) displays look like the glasses (\(list))")
+    }
+
+    /// Every online display with its mode and why it is not the glasses (nil skip = candidate).
+    private static func online() -> [(id: CGDirectDisplayID, mode: CGDisplayMode?, skip: String?, candidate: GlassesDisplay?)] {
         var count: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetOnlineDisplayList(count, &ids, &count)
-        var candidates: [GlassesDisplay] = []
-        var notes: [String] = []
-        for id in ids.prefix(Int(count)) {
+        return ids.prefix(Int(count)).map { id in
             let m = CGDisplayCopyDisplayMode(id)
-            let size = m.map { "\($0.pixelWidth)x\($0.pixelHeight)" } ?? "no mode"
             let skip: String?
             if OwnDisplays.contains(id) { skip = "ours" }
             else if CGDisplayIsBuiltin(id) != 0 { skip = "built-in" }
             else if CGDisplayIsActive(id) == 0 { skip = "inactive" }
             else if let m, m.pixelHeight == 1080, m.pixelWidth == 1920 || m.pixelWidth == 3840 { skip = nil }
             else { skip = "not 1920/3840x1080" }
-            notes.append("\(id) \(size) vendor \(String(format: "0x%04x", CGDisplayVendorNumber(id))): \(skip ?? "candidate")")
-            if skip == nil, let m { candidates.append(GlassesDisplay(id: id, pixelWidth: m.pixelWidth, pixelHeight: m.pixelHeight)) }
-        }
-        let list = notes.joined(separator: "; ")
-        switch candidates.count {
-        case 1: return (candidates[0], "")
-        case 0: return (nil, "no glasses display (\(list))")
-        default: return (nil, "\(candidates.count) displays look like the glasses (\(list))")
+            let candidate = skip == nil ? m.map { GlassesDisplay(id: id, pixelWidth: $0.pixelWidth, pixelHeight: $0.pixelHeight) } : nil
+            return (id, m, skip, candidate)
         }
     }
 }
