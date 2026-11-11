@@ -118,7 +118,7 @@ func describeDisplays() -> String {
     return "\(count) active: " + ids.map { id in
         var s = "\(id) \(CGDisplayPixelsWide(id))x\(CGDisplayPixelsHigh(id))"
         if CGDisplayIsMain(id) != 0 { s += " main" }
-        if CGDisplayVendorNumber(id) == XRVirtualDisplay.vendorID { s += " virtual" }
+        if OwnDisplays.contains(id) { s += " virtual" }
         return s
     }.joined(separator: ", ")
 }

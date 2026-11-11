@@ -182,6 +182,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Log.line("virtual display: screen \(s.id) FAILED: no display id")
                 return nil
             }
+            OwnDisplays.add(d.displayID)
+            Log.line("virtual display: screen \(s.id) id \(d.displayID) reports vendor \(String(format: "0x%04x", CGDisplayVendorNumber(d.displayID)))")
             Log.line("virtual display: screen \(s.id) created id \(d.displayID) \(s.pixelWidth)x\(s.pixelHeight)")
             return d
         } catch {
@@ -197,6 +199,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let capture = slot.capture { Task { await capture.stop() } }
         slot.display.invalidate()
         Log.line("virtual display: screen \(slot.id) removed")
+        // WindowServer drops the display a moment later; until then it must still not count as the glasses.
+        let id = slot.displayID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { OwnDisplays.remove(id) }
     }
 
     /// Puts our displays in macOS's arrangement the way they sit around the head (see `DisplayArrangement`), for this

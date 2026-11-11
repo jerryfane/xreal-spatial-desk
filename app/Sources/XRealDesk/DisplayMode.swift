@@ -4,6 +4,20 @@ import CVirtualDisplay
 import GlassesLink
 import XRealCore
 
+/// IDs of the virtual displays this process created, so they are never taken for the glasses (ours can also be
+/// 1920×1080 or 3840×1080). Kept by ID: macOS is not guaranteed to report the vendor number we set.
+enum OwnDisplays {
+    private static let lock = NSLock()
+    private static var ids: Set<CGDirectDisplayID> = []
+
+    static func add(_ id: CGDirectDisplayID) { lock.withLock { _ = ids.insert(id) } }
+    static func remove(_ id: CGDirectDisplayID) { lock.withLock { _ = ids.remove(id) } }
+
+    static func contains(_ id: CGDirectDisplayID) -> Bool {
+        lock.withLock { ids.contains(id) } || CGDisplayVendorNumber(id) == XRVirtualDisplay.vendorID
+    }
+}
+
 /// The glasses as a macOS display: external, 1080 pixels high, 1920 (regular) or 3840 (side-by-side) wide.
 struct GlassesDisplay: Equatable {
     var id: CGDirectDisplayID
@@ -15,14 +29,14 @@ struct GlassesDisplay: Equatable {
     var description: String { "display \(id) \(pixelWidth)x\(pixelHeight) (\(mode.map { "\($0)" } ?? "unknown mode"))" }
 
     /// The single display that looks like the glasses, or nil (none, or several, which would be a guess). Our own
-    /// virtual displays (which can also be 1920×1080 or 3840×1080) are recognised by their vendor number.
+    /// virtual displays are skipped (`OwnDisplays`).
     static func find() -> GlassesDisplay? {
         var count: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetOnlineDisplayList(count, &ids, &count)
         let candidates: [GlassesDisplay] = ids.compactMap { id in
-            guard CGDisplayVendorNumber(id) != XRVirtualDisplay.vendorID, CGDisplayIsBuiltin(id) == 0, CGDisplayIsActive(id) != 0,
+            guard !OwnDisplays.contains(id), CGDisplayIsBuiltin(id) == 0, CGDisplayIsActive(id) != 0,
                   let m = CGDisplayCopyDisplayMode(id), m.pixelHeight == 1080,
                   m.pixelWidth == 1920 || m.pixelWidth == 3840 else { return nil }
             return GlassesDisplay(id: id, pixelWidth: m.pixelWidth, pixelHeight: m.pixelHeight)

@@ -13,6 +13,12 @@ if let out = options.out {
         FileHandle.standardError.write(Data("cannot write to \(out.path): \(error)\n".utf8))
         exit(2)
     }
+} else {
+    // Started from Finder there is no terminal: keep the last run's log where Console.app and the user can find it.
+    let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/XRealDesk")
+    do { try Log.open(logs) } catch {
+        FileHandle.standardError.write(Data("cannot write to \(logs.path): \(error)\n".utf8))
+    }
 }
 MainActor.assumeIsolated {
     let app = NSApplication.shared
