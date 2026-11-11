@@ -201,10 +201,17 @@ public struct LayoutLibrary: Codable, Equatable, Sendable {
     /// `layouts.json.bad` (kept for the user, out of the way) and also gives the default, with the reason; if it
     /// cannot be renamed either, `safeToWrite` is false.
     public static func load(from url: URL = defaultURL) -> Loaded {
-        guard FileManager.default.fileExists(atPath: url.path) else { return Loaded(library: LayoutLibrary(), safeToWrite: true) }
         let reason: String
         do {
-            var l = try JSONDecoder().decode(LayoutLibrary.self, from: Data(contentsOf: url))
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch let e as CocoaError where e.code == .fileReadNoSuchFile {
+                // Only a file that is really not there means "first run"; any other read failure (no permission,
+                // unreadable folder) is reported below and the file is kept.
+                return Loaded(library: LayoutLibrary(), safeToWrite: true)
+            }
+            var l = try JSONDecoder().decode(LayoutLibrary.self, from: data)
             l.current = l.current.sanitized
             l.saved = l.saved.map(\.sanitized)
             return Loaded(library: l, safeToWrite: true)
@@ -233,7 +240,7 @@ public struct LayoutLibrary: Codable, Equatable, Sendable {
 /// Where macOS should put our virtual displays in its arrangement, so the pointer moves between them the way they
 /// sit around the head: the row left to right in yaw order, right of the other displays and top-aligned with them;
 /// a screen above (below) the row sits on top of (under) the row display nearest its yaw, centred on it, pushed
-/// right only as far as needed to clear the one before it in its band.
+/// right only as far as needed to clear the one before it in its band and the other displays.
 public enum DisplayArrangement {
     public struct Item: Equatable, Sendable {
         public var id: UInt32
@@ -268,7 +275,7 @@ public enum DisplayArrangement {
             x += i.width
         }
         func band(_ items: [Item], y: (Item) -> Int) {
-            var end = Int.min
+            var end = left  // never over the other displays
             for i in items {
                 // Centred on the nearest row display, else from the left edge.
                 let under = row.min { abs($0.yaw - i.yaw) < abs($1.yaw - i.yaw) }

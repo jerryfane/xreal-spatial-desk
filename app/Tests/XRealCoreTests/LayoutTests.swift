@@ -182,5 +182,14 @@ final class LayoutTests: XCTestCase {
         ], rightOf: (x: 0, y: 0, width: 1000, height: 800))
         XCTAssertEqual(two[2].map { [$0.x, $0.y] }, [1000, -1080])
         XCTAssertEqual(two[3].map { [$0.x, $0.y] }, [1000 + 1920, -720])
+
+        // A display wider than the row display it is centred on would reach over the other displays: kept right of them.
+        let wide = DisplayArrangement.origins([
+            Item(id: 1, yaw: 0, pitch: 0, width: 1920, height: 1080),
+            Item(id: 2, yaw: 0, pitch: -25, width: 3840, height: 1080),
+            Item(id: 3, yaw: 0, pitch: 25, width: 3840, height: 1080),
+        ], rightOf: (x: 0, y: 0, width: 2560, height: 1440))
+        XCTAssertEqual(wide[2].map { [$0.x, $0.y] }, [2560, 1080])
+        XCTAssertEqual(wide[3].map { [$0.x, $0.y] }, [2560, -1080])
     }
 }
