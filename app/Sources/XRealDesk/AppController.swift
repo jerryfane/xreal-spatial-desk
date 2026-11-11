@@ -698,10 +698,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// window between screens) and when it is on a display other than ours or the one under the 3D image.
     private func followGaze() {
         guard pointerFollowsGaze, !slots.isEmpty, head.calibration != nil,
-              let location = CGEvent(source: nil)?.location else { return }
+              let location = CGEvent(source: nil)?.location else { return gazeFocus.reset() }
         var under: CGDirectDisplayID = 0
         var count: UInt32 = 0
-        guard CGGetDisplaysWithPoint(location, 1, &under, &count) == .success, count == 1 else { return }
+        guard CGGetDisplaysWithPoint(location, 1, &under, &count) == .success, count == 1 else { return gazeFocus.reset() }
         let pointer = slots.values.first { $0.displayID == under }?.id
         let covered = renderWindow.flatMap { $0.level == .screenSaver ? $0.screen?.displayID : nil }
         let movable = NSEvent.pressedMouseButtons == 0 && (pointer != nil || under == covered)

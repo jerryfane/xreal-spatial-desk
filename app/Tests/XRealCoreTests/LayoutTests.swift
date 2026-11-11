@@ -292,5 +292,10 @@ final class LayoutTests: XCTestCase {
         // Under the 3D image (pointer on none of our screens, but movable): moves to the screen looked at.
         XCTAssertNil(f.update(looking: 1, pointer: nil, pointerMovable: true, now: 4.0))
         XCTAssertEqual(f.update(looking: 1, pointer: nil, pointerMovable: true, now: 4.2), 1)
+        // A dwell interrupted by a pause (feature off, no pointer position) starts over afterwards.
+        XCTAssertNil(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 5.0))
+        f.reset()
+        XCTAssertNil(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 9.0), "not counted from before the pause")
+        XCTAssertEqual(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 9.2), 2)
     }
 }
