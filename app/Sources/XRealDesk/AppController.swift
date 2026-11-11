@@ -6,22 +6,46 @@ import MetalKit
 import SpatialRenderer
 import XRealCore
 
-/// Menu bar app: one virtual display, captured and shown as a head-tracked screen in a side-by-side window.
+/// One screen of the layout as a live macOS display and its capture.
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate {
+final class ScreenSlot {
+    let id: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let display: XRVirtualDisplay
+    let capture: ScreenCapture?
+    var captureStatus = "starting"
+    var contentWindow: NSWindow?
+    /// Set when the screen leaves the layout; a capture that finishes starting afterwards stops itself.
+    var removed = false
+
+    init(id: Int, pixelWidth: Int, pixelHeight: Int, display: XRVirtualDisplay, capture: ScreenCapture?) {
+        self.id = id
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.display = display
+        self.capture = capture
+    }
+
+    var displayID: CGDirectDisplayID { display.displayID }
+}
+
+/// Menu bar app: the layout's screens as virtual displays, captured and shown as head-tracked screens in a
+/// side-by-side window.
+@MainActor
+final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let options: Options
     private let head = HeadState()
     private var link: GlassesLink?
     private let modes = DisplayModeController()
-    private var sbsItem: NSMenuItem?
-    private var display: XRVirtualDisplay?
-    private var capture: ScreenCapture?
+    private var library = LayoutLibrary()
+    private var slots: [Int: ScreenSlot] = [:]
+    private var device: MTLDevice?
     private var renderer: Renderer?
     private var renderWindow: NSWindow?
-    private var contentWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var statusLines: [NSMenuItem] = []
-    private var captureStatus = "Capture: starting"
+    private var permissionRequested = false
     private var signalSources: [DispatchSourceSignal] = []
     private var lastStats = (time: 0.0, captured: 0, rendered: 0)
     private var fps = (capture: 0.0, render: 0.0)
@@ -29,6 +53,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     init(options: Options) {
         self.options = options
     }
+
+    private var layout: Layout { library.current }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -38,6 +64,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if options.seconds > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + options.seconds) { NSApp.terminate(nil) }
         }
+        loadLibrary()
         if options.probe {
             probe()
             return
@@ -46,12 +73,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             sbsCheck()
             return
         }
-        createDisplay()
         startGlasses()
         startRenderer()
+        applyLayout()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
                                                queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { _ = self?.placeRenderWindow(.displaysChanged) }
+            MainActor.assumeIsolated {
+                _ = self?.placeRenderWindow(.displaysChanged)
+                self?.arrangeDisplays()
+            }
         }
         if options.sbs { setSideBySide(true) }
         makeStatusItem()
@@ -61,33 +91,138 @@ final class AppController: NSObject, NSApplicationDelegate {
         for t in options.snapshots {
             DispatchQueue.main.asyncAfter(deadline: .now() + t) { self.snapshot(at: t) }
         }
-        startCapture()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         shutdown()
     }
 
+    // MARK: layouts
+
+    private func loadLibrary() {
+        let (loaded, problem) = LayoutLibrary.load()
+        library = loaded
+        if let problem { Log.line("layouts: \(problem)") }
+        if let name = options.layout {
+            if let l = (library.saved + Layout.presets).first(where: { $0.name == name }) {
+                library.current = l
+            } else {
+                Log.line("layouts: no layout named \"\(name)\"; using \"\(library.current.name)\"")
+            }
+        }
+        Log.line("layout: \"\(layout.name)\", \(layout.screens.count) screen(s)")
+    }
+
+    /// Makes the displays match the layout: removes screens that left it (or changed resolution), creates the new
+    /// ones, saves the library, and lets the arrangement and status follow.
+    private func applyLayout() {
+        for (id, slot) in slots {
+            if let s = layout.screen(id), s.pixelWidth == slot.pixelWidth, s.pixelHeight == slot.pixelHeight { continue }
+            removeSlot(slot)
+        }
+        for s in layout.screens where slots[s.id] == nil {
+            guard let slot = createSlot(s) else { continue }
+            slots[s.id] = slot
+            startCapture(slot)
+        }
+        do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
+        // New displays appear asynchronously; the screen-parameters notification arranges them too.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.arrangeDisplays() }
+        updateStatus()
+    }
+
+    private func changeLayout(_ change: (inout Layout) -> Void) {
+        var l = library.current
+        change(&l)
+        library.current = l
+        applyLayout()
+    }
+
+    private func createSlot(_ s: SpatialScreen) -> ScreenSlot? {
+        guard let display = makeDisplay(s) else { return nil }
+        var capture: ScreenCapture?
+        if let device {
+            do { capture = try ScreenCapture(device: device) } catch { Log.line("capture: \(error)") }
+        }
+        return ScreenSlot(id: s.id, pixelWidth: s.pixelWidth, pixelHeight: s.pixelHeight, display: display, capture: capture)
+    }
+
+    private func makeDisplay(_ s: SpatialScreen) -> XRVirtualDisplay? {
+        do {
+            // About 81 dpi, as a 27-inch 1080p monitor; macOS uses it only for its own defaults.
+            let mm = CGSize(width: Double(s.pixelWidth) * 0.3125, height: Double(s.pixelHeight) * 0.3125)
+            let d = try XRVirtualDisplay(name: "XReal Desk \(s.id)", width: UInt(s.pixelWidth), height: UInt(s.pixelHeight),
+                                         refreshRate: 60, hiDPI: false, sizeInMillimeters: mm, serialNumber: UInt32(s.id),
+                                         terminated: { Log.line("virtual display: screen \(s.id) terminated by the system") })
+            guard d.displayID != kCGNullDirectDisplay else {
+                Log.line("virtual display: screen \(s.id) FAILED: no display id")
+                return nil
+            }
+            Log.line("virtual display: screen \(s.id) created id \(d.displayID) \(s.pixelWidth)x\(s.pixelHeight)")
+            return d
+        } catch {
+            Log.line("virtual display: screen \(s.id) FAILED: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func removeSlot(_ slot: ScreenSlot) {
+        slot.removed = true
+        slots[slot.id] = nil
+        slot.contentWindow?.orderOut(nil)
+        if let capture = slot.capture { Task { await capture.stop() } }
+        slot.display.invalidate()
+        Log.line("virtual display: screen \(slot.id) removed")
+    }
+
+    /// Puts our displays in macOS's arrangement the way they sit around the head (see `DisplayArrangement`), for this
+    /// login session only. Does nothing until every display has appeared, or when they are already in place.
+    private func arrangeDisplays() {
+        let ours = Set(slots.values.map(\.displayID))
+        guard !ours.isEmpty else { return }
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &ids, &count)
+        let others = ids.filter { !ours.contains($0) }
+        guard ours.isSubset(of: Set(ids)), let first = others.first else { return }
+        let box = others.dropFirst().reduce(CGDisplayBounds(first)) { $0.union(CGDisplayBounds($1)) }
+        let items = layout.screens.compactMap { s -> DisplayArrangement.Item? in
+            guard let id = slots[s.id]?.displayID else { return nil }
+            let b = CGDisplayBounds(id)
+            return DisplayArrangement.Item(id: id, yaw: s.yaw, pitch: s.pitch, width: Int(b.width), height: Int(b.height))
+        }
+        let origins = DisplayArrangement.origins(items, rightOf: (Int(box.minX), Int(box.minY), Int(box.width), Int(box.height)))
+        let moves = origins.filter { id, o in
+            let b = CGDisplayBounds(id)
+            return Int(b.minX) != o.x || Int(b.minY) != o.y
+        }
+        guard !moves.isEmpty else { return }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return }
+        for (id, o) in moves { CGConfigureDisplayOrigin(config, id, Int32(o.x), Int32(o.y)) }
+        let result = CGCompleteDisplayConfiguration(config, .forSession)
+        Log.line("arrangement: \(moves.map { "\($0.key) → (\($0.value.x), \($0.value.y))" }.sorted().joined(separator: ", ")): \(result == .success ? "done" : "FAILED (\(result.rawValue))")")
+    }
+
     // MARK: probe
 
-    /// Creates the display, lists displays, removes it. Answers "does CGVirtualDisplay work on this macOS?".
+    /// Creates one display, lists displays, removes it. Answers "does CGVirtualDisplay work on this macOS?".
     private func probe() {
         Log.line("probe: CGVirtualDisplay classes present: \(XRVirtualDisplay.isAvailable())")
-        createDisplay()
-        guard let display else {
+        guard let display = makeDisplay(layout.screens[0]) else {
             Log.line("probe: RESULT virtual display NOT created")
             exit(1)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             let id = display.displayID
-            Log.line("probe: displays with virtual: \(describeDisplays(virtual: id))")
+            Log.line("probe: displays with virtual: \(describeDisplays())")
             Log.line("probe: NSScreens: " + NSScreen.screens.map { "\($0.localizedName) \(Int($0.frame.width))x\(Int($0.frame.height)) id \($0.displayID)" }.joined(separator: "; "))
             if let mode = CGDisplayCopyDisplayMode(id) {
                 Log.line("probe: virtual mode \(mode.pixelWidth)x\(mode.pixelHeight) px, \(mode.width)x\(mode.height) pt, \(mode.refreshRate) Hz")
             }
             let present = describeDisplays().contains("\(id) ")
             display.invalidate()
-            self.display = nil
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 let after = describeDisplays()
                 let removed = !after.contains("\(id) ")
@@ -99,22 +234,6 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     // MARK: setup
-
-    private func createDisplay() {
-        do {
-            let d = try XRVirtualDisplay(name: "XReal Desk", width: UInt(options.displayWidth), height: UInt(options.displayHeight),
-                                         refreshRate: 60, hiDPI: false, sizeInMillimeters: CGSize(width: 600, height: 338),
-                                         terminated: { Log.line("virtual display: terminated by the system") })
-            guard d.displayID != kCGNullDirectDisplay else {
-                Log.line("virtual display: FAILED: no display id")
-                return
-            }
-            display = d
-            Log.line("virtual display: created id \(d.displayID) \(options.displayWidth)x\(options.displayHeight)")
-        } catch {
-            Log.line("virtual display: FAILED: \(error.localizedDescription)")
-        }
-    }
 
     private func startGlasses() {
         let head = self.head, modes = self.modes
@@ -142,7 +261,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func setSideBySide(_ on: Bool) {
         if on {
-            guard let glasses = GlassesDisplay.find(excluding: display?.displayID) else {
+            guard let glasses = GlassesDisplay.find() else {
                 Log.line("display mode: glasses display not found (\(describeDisplays())); side-by-side not switched on")
                 updateStatus()
                 return
@@ -170,7 +289,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     @discardableResult
     private func placeRenderWindow(_ trigger: PlacementTrigger, forceGlasses: GlassesDisplay? = nil) -> CGDirectDisplayID? {
         guard let window = renderWindow else { return nil }
-        let glasses = forceGlasses ?? GlassesDisplay.find(excluding: display?.displayID)
+        let glasses = forceGlasses ?? GlassesDisplay.find()
         if forceGlasses == nil, let mode = glasses?.mode { modes.keeper.glassesObserved(mode) }
         let target = RenderTarget.choose(outputDisplay: options.outputDisplay, glassesDisplay: glasses?.id,
                                          glassesSideBySide: glasses?.mode == .sideBySide,
@@ -210,26 +329,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Side-by-side is "on" while this run has the glasses switched away from their original mode.
     private var sideBySideOn: Bool { modes.keeper.requested == .sideBySide && modes.keeper.pendingRestore != nil }
 
-    @objc private func sbsAction() { setSideBySide(!sideBySideOn) }
-
     private func startRenderer() {
         guard let device = MTLCreateSystemDefaultDevice() else {
             Log.line("renderer: no Metal device")
             return
         }
+        self.device = device
         do {
-            var capture: ScreenCapture?
-            do { capture = try ScreenCapture(device: device) } catch { Log.line("capture: \(error)") }
-            self.capture = capture
-            // One screen 1.6 m ahead, 0.9 m wide, with the virtual display's aspect ratio.
-            var placement = ScreenPlacement()
-            placement.height = placement.width * Double(options.displayHeight) / Double(options.displayWidth)
-            let head = self.head
-            let renderer = try Renderer(device: device) { [placement] in
-                guard let displays = head.calibration?.displays else { return (nil, nil) }
-                let frame = capture?.latestFrame
-                return (Renderer.Scene(displays: displays, head: head.orientation, screen: placement, texture: frame?.texture),
-                        frame?.backing)
+            let renderer = try Renderer(device: device) { [weak self] in
+                // MTKView draws on the main thread.
+                var frame: (scene: Renderer.Scene?, keepAlive: Any?) = (nil, nil)
+                MainActor.assumeIsolated { frame = self?.scene() ?? (nil, nil) }
+                return frame
             }
             // One window; placeRenderWindow decides between full screen on the glasses and a preview window.
             let view = MTKView(frame: NSRect(x: 0, y: 0, width: 1920, height: 540))
@@ -263,45 +374,68 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func startCapture() {
-        guard let display, let capture else { return }
-        if !ScreenRecordingPermission.isGranted {
-            ScreenRecordingPermission.request()
-            captureStatus = "Capture: Screen Recording permission needed (see log)"
-            Log.line("capture: PERMISSION MISSING. \(ScreenRecordingPermission.instructions)")
+    /// Every screen of the layout with its latest captured frame (a placeholder until the first one). The frames'
+    /// backings are kept alive until the GPU is done with them.
+    private func scene() -> (scene: Renderer.Scene?, keepAlive: Any?) {
+        guard let displays = head.calibration?.displays else { return (nil, nil) }
+        var backings: [CVMetalTexture] = []
+        let screens = layout.screens.map { s -> Renderer.Screen in
+            let frame = slots[s.id]?.capture?.latestFrame
+            if let frame { backings.append(frame.backing) }
+            return Renderer.Screen(placement: s.placement, texture: frame?.texture)
+        }
+        return (Renderer.Scene(displays: displays, head: head.orientation, screens: screens), backings)
+    }
+
+    private func startCapture(_ slot: ScreenSlot) {
+        guard let capture = slot.capture else {
+            slot.captureStatus = "unavailable"
             return
         }
-        capture.onStop = { error in Log.line("capture: stopped: \(error)") }
-        let id = display.displayID, w = options.displayWidth, h = options.displayHeight
+        if !ScreenRecordingPermission.isGranted {
+            slot.captureStatus = "Screen Recording permission needed (see log)"
+            if !permissionRequested {
+                permissionRequested = true
+                ScreenRecordingPermission.request()
+                Log.line("capture: PERMISSION MISSING. \(ScreenRecordingPermission.instructions)")
+            }
+            return
+        }
+        let id = slot.displayID, screenID = slot.id
+        capture.onStop = { error in Log.line("capture: screen \(screenID) stopped: \(error)") }
         let own = Set([renderWindow?.windowNumber].compactMap { $0 })
         Task { @MainActor in
-            if options.testPattern { await placeContentWindow() }
+            if options.testPattern { await placeContentWindow(slot) }
             do {
-                try await capture.start(displayID: id, width: w, height: h, excluding: own)
-                self.captureStatus = "Capture: running"
-                Log.line("capture: started on display \(id) (excluding our render window)")
+                try await capture.start(displayID: id, width: slot.pixelWidth, height: slot.pixelHeight, excluding: own)
+                if slot.removed {
+                    await capture.stop()
+                    return
+                }
+                slot.captureStatus = "running"
+                Log.line("capture: screen \(screenID) started on display \(id) (excluding our render window)")
             } catch {
-                self.captureStatus = "Capture: failed (see log)"
-                Log.line("capture: FAILED: \(error)")
+                slot.captureStatus = "failed (see log)"
+                Log.line("capture: screen \(screenID) FAILED: \(error)")
                 if !ScreenRecordingPermission.isGranted { Log.line("capture: \(ScreenRecordingPermission.instructions)") }
             }
         }
     }
 
     /// With --test-pattern: a window covering the virtual display, so the captured content is recognisable and keeps
-    /// changing in unattended runs. Without it the display shows its own desktop. On a Mac without
-    /// a monitor the virtual display is the only one and also holds the render window; then the pattern takes the
+    /// changing in unattended runs. Without it the display shows its own desktop. On a Mac without a monitor the
+    /// first virtual display can be the only real screen and also hold the render window; then the pattern takes the
     /// lower half so it does not cover the render window (an occluded window gets fewer frames).
-    private func placeContentWindow() async {
-        guard let id = display?.displayID else { return }
+    private func placeContentWindow(_ slot: ScreenSlot) async {
+        let id = slot.displayID
         var screen: NSScreen?
         for _ in 0..<30 {
             screen = NSScreen.screens.first { $0.displayID == id }
             if screen != nil { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard let screen else {
-            Log.line("content window: virtual display \(id) not among NSScreens")
+        guard let screen, !slot.removed else {
+            if !slot.removed { Log.line("content window: virtual display \(id) not among NSScreens") }
             return
         }
         var frame = screen.frame
@@ -315,13 +449,29 @@ final class AppController: NSObject, NSApplicationDelegate {
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         renderWindow?.orderFrontRegardless()
-        contentWindow = window
+        slot.contentWindow = window
     }
+
+    // MARK: menu
 
     private func makeStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "XR"
         let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+        statusItem = item
+        buildMenu(menu)
+    }
+
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        MainActor.assumeIsolated { buildMenu(menu) }
+    }
+
+    /// The whole menu, rebuilt each time it opens so it always shows the current layout.
+    private func buildMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.autoenablesItems = false
         statusLines = (0..<3).map { _ in
             let line = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             line.isEnabled = false
@@ -329,20 +479,126 @@ final class AppController: NSObject, NSApplicationDelegate {
             return line
         }
         menu.addItem(.separator())
-        let recenter = NSMenuItem(title: "Recenter", action: #selector(recenterAction), keyEquivalent: "r")
-        recenter.target = self
-        menu.addItem(recenter)
-        let sbs = NSMenuItem(title: "Side-by-side 3D on the glasses", action: #selector(sbsAction), keyEquivalent: "s")
-        sbs.target = self
-        menu.addItem(sbs)
-        sbsItem = sbs
+        menu.addItem(ActionItem("Recenter", key: "r") { [weak self] in self?.recenter() })
+        var sbsTitle = "Side-by-side 3D on the glasses"
+        if let last = modes.keeper.last, last.result != .accepted { sbsTitle += " (glasses replied: \(last.result))" }
+        menu.addItem(ActionItem(sbsTitle, key: "s", checked: sideBySideOn) { [weak self] in
+            guard let self else { return }
+            setSideBySide(!sideBySideOn)
+        })
+        menu.addItem(.separator())
+        menu.addItem(submenu("Screens", screensMenu()))
+        menu.addItem(submenu("Layouts", layoutsMenu()))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit XReal Desk", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        item.menu = menu
-        statusItem = item
         updateStatus()
     }
 
-    @objc private func recenterAction() { recenter() }
+    private func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: title)
+        menu.autoenablesItems = false
+        for i in items { menu.addItem(i) }
+        item.submenu = menu
+        return item
+    }
+
+    private static let sizes: [Double] = [27, 32, 40, 48, 55, 65, 85]
+    private static let distances: [Double] = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+    private static let shapes: [(radius: Double, title: String)] = [
+        (0, "Flat"), (4, "Curved 4000R"), (2.5, "Curved 2500R"), (1.8, "Curved 1800R"), (1, "Curved 1000R"),
+    ]
+    private static let resolutions: [(w: Int, h: Int, title: String)] = [
+        (1920, 1080, "1920×1080 (16:9)"), (2560, 1440, "2560×1440 (16:9)"), (2560, 1080, "2560×1080 (21:9)"),
+        (3440, 1440, "3440×1440 (21:9)"), (3840, 1080, "3840×1080 (32:9)"), (1080, 1920, "1080×1920 (portrait)"),
+    ]
+    private static let positions: [(pitch: Double, title: String)] = [(0, "In the row"), (25, "Above the row"), (-25, "Below the row")]
+
+    private func screensMenu() -> [NSMenuItem] {
+        var items = layout.screens.map { s -> NSMenuItem in
+            let shape = Self.shapes.first { $0.radius == s.curveRadius }?.title ?? String(format: "Curved %.0fR", s.curveRadius * 1000)
+            let title = String(format: "Screen %d: %.0f″ %@, %d×%d, %.1f m, %.0f°", s.id, s.diagonalInches, shape.lowercased(),
+                               s.pixelWidth, s.pixelHeight, s.distance, s.yaw)
+            return submenu(title, screenMenu(s))
+        }
+        items.append(.separator())
+        items.append(ActionItem("Add screen", enabled: layout.screens.count < Layout.maxScreens) { [weak self] in
+            self?.changeLayout { _ = $0.addScreen() }
+        })
+        return items
+    }
+
+    private func screenMenu(_ s: SpatialScreen) -> [NSMenuItem] {
+        let id = s.id
+        func edit(_ change: @escaping (inout SpatialScreen) -> Void) -> () -> Void {
+            { [weak self] in self?.changeLayout { $0.update(id, change) } }
+        }
+        let sizes = Self.sizes.map { d in ActionItem(String(format: "%.0f″", d), checked: s.diagonalInches == d, edit { $0.diagonalInches = d }) }
+        let distances = Self.distances.map { d in ActionItem(String(format: "%.2g m", d), checked: s.distance == d, edit { $0.distance = d }) }
+        let shapes = Self.shapes.map { r in ActionItem(r.title, checked: s.curveRadius == r.radius, edit { $0.curveRadius = r.radius }) }
+        let resolutions = Self.resolutions.map { r in
+            ActionItem(r.title, checked: s.pixelWidth == r.w && s.pixelHeight == r.h, edit { $0.pixelWidth = r.w; $0.pixelHeight = r.h })
+        }
+        let positions = Self.positions.map { p in
+            ActionItem(p.title, checked: (p.pitch == 0) == s.inRow && (p.pitch == 0 || (p.pitch > 0) == (s.pitch > 0)), edit { $0.pitch = p.pitch })
+        }
+        return [
+            submenu("Size", sizes), submenu("Distance", distances), submenu("Shape", shapes),
+            submenu("Resolution", resolutions), submenu("Position", positions), .separator(),
+            ActionItem("Remove", enabled: layout.screens.count > 1) { [weak self] in self?.changeLayout { $0.removeScreen(id) } },
+        ]
+    }
+
+    private func layoutsMenu() -> [NSMenuItem] {
+        func choose(_ l: Layout) -> NSMenuItem {
+            ActionItem(l.name, checked: l == layout) { [weak self] in
+                self?.changeLayout { $0 = l }
+                Log.line("layout: \"\(l.name)\"")
+            }
+        }
+        var items = Layout.presets.map(choose)
+        if !library.saved.isEmpty {
+            items.append(.separator())
+            items += library.saved.map(choose)
+        }
+        items.append(.separator())
+        items.append(ActionItem("Save current layout as…") { [weak self] in self?.saveLayoutAs() })
+        if !library.saved.isEmpty {
+            items.append(submenu("Delete saved layout", library.saved.map { l in
+                ActionItem(l.name) { [weak self] in
+                    guard let self else { return }
+                    library.saved.removeAll { $0.name == l.name }
+                    do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
+                }
+            }))
+        }
+        return items
+    }
+
+    private func saveLayoutAs() {
+        let alert = NSAlert()
+        alert.messageText = "Save layout"
+        alert.informativeText = "Name for the current screens. A saved layout with the same name is replaced."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = Layout.presets.contains { $0.name == layout.name } ? "" : layout.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let chosen = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !chosen.isEmpty, !Layout.presets.contains(where: { $0.name == chosen }) else {
+            Log.line("layouts: not saved: empty name or the name of a preset")
+            return
+        }
+        var l = layout
+        l.name = chosen
+        library.save(l)
+        library.current = l
+        do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
+        Log.line("layouts: saved \"\(chosen)\"")
+    }
 
     private func recenter() {
         head.recenter()
@@ -351,13 +607,14 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func tick() {
         let now = Log.elapsed
-        let captured = capture?.framesReceived ?? 0, rendered = renderer?.framesRendered ?? 0
+        let captured = slots.values.reduce(0) { $0 + ($1.capture?.framesReceived ?? 0) }
+        let rendered = renderer?.framesRendered ?? 0
         let dt = now - lastStats.time
         if dt > 0 {
-            fps = (Double(captured - lastStats.captured) / dt, Double(rendered - lastStats.rendered) / dt)
+            fps = (Double(captured - lastStats.captured) / dt / Double(max(slots.count, 1)), Double(rendered - lastStats.rendered) / dt)
         }
         lastStats = (now, captured, rendered)
-        (contentWindow?.contentView as? TestPatternView)?.needsDisplay = true
+        for slot in slots.values { slot.contentWindow?.contentView?.needsDisplay = true }
         // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
         // target with no screen notification after them (e.g. a restore accepted after the display already changed).
         placeRenderWindow(.periodicCheck)
@@ -367,18 +624,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func updateStatus() {
         guard statusLines.count == 3 else { return }
         statusLines[0].title = head.status
-        statusLines[1].title = display.map { "Virtual display: \($0.displayID), \(options.displayWidth)×\(options.displayHeight)" } ?? "Virtual display: none"
-        statusLines[2].title = captureStatus + String(format: " · capture %.0f fps · render %.0f fps", fps.capture, fps.render)
-        sbsItem?.state = sideBySideOn ? .on : .off
-        if let last = modes.keeper.last, last.result != .accepted {
-            sbsItem?.title = "Side-by-side 3D on the glasses (glasses replied: \(last.result))"
-        }
+        statusLines[1].title = "Layout: \(layout.name), \(slots.count) of \(layout.screens.count) screen(s) live"
+        let statuses = Set(slots.values.map(\.captureStatus))
+        let capture = statuses.count == 1 ? statuses.first! : statuses.sorted().joined(separator: " / ")
+        statusLines[2].title = "Capture: \(capture.isEmpty ? "none" : capture)"
+            + String(format: " · %.0f fps per screen · render %.0f fps", fps.capture, fps.render)
     }
 
     private func snapshot(at t: Double) {
         let p = HeadPose(head.orientation)
-        Log.line(String(format: "snapshot t=%.0f s: yaw %.1f pitch %.1f roll %.1f, capture %.0f fps (%d frames), render %.0f fps",
-                        t, p.yaw, p.pitch, p.roll, fps.capture, capture?.framesReceived ?? 0, fps.render))
+        let frames = slots.values.reduce(0) { $0 + ($1.capture?.framesReceived ?? 0) }
+        Log.line(String(format: "snapshot t=%.0f s: yaw %.1f pitch %.1f roll %.1f, capture %.0f fps per screen (%d frames), render %.0f fps",
+                        t, p.yaw, p.pitch, p.roll, fps.capture, frames, fps.render))
         guard let out = options.out else { return }
         let name = String(format: "sbs-%03.0fs.png", t)
         renderer?.snapshot(to: out.appendingPathComponent(name)) { ok in
@@ -401,20 +658,24 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func shutdown() {
         // Put the glasses' display mode back first, while the control connection is still up, and keep the image on
         // them until they are seen back in their original mode, so neither eye sees half a desktop meanwhile.
-        modes.restoreBlocking(excluding: display?.displayID)
+        modes.restoreBlocking()
         renderWindow?.orderOut(nil)
-        contentWindow?.orderOut(nil)
+        for slot in slots.values { slot.contentWindow?.orderOut(nil) }
         link?.stop()
-        if let capture {
+        let captures = slots.values.compactMap(\.capture)
+        if !captures.isEmpty {
             let done = DispatchSemaphore(value: 0)
-            Task.detached { await capture.stop(); done.signal() }
+            Task.detached {
+                for c in captures { await c.stop() }
+                done.signal()
+            }
             _ = done.wait(timeout: .now() + 2)
         }
-        let id = display?.displayID
-        display?.invalidate()
-        display = nil
-        // WindowServer updates the display list asynchronously, so listing displays here would still show it.
-        Log.line("quit: virtual display \(id.map(String.init) ?? "-") released")
+        let ids = slots.values.map(\.displayID)
+        for slot in slots.values { slot.display.invalidate() }
+        slots = [:]
+        // WindowServer updates the display list asynchronously, so listing displays here would still show them.
+        Log.line("quit: virtual displays \(ids.map(String.init).sorted().joined(separator: ", ")) released")
     }
 }
 

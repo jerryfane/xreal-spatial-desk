@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import CVirtualDisplay
 import Foundation
 import GlassesLink
 import XRealCore
@@ -20,26 +21,27 @@ struct Options {
     var sbsCheck = false
     /// Cover the virtual display with a grid-and-clock window (for unattended runs: recognisable, always changing).
     var testPattern = false
-    var displayWidth = 1920
-    var displayHeight = 1080
+    /// Start with this preset or saved layout instead of the last one used.
+    var layout: String?
     /// Show the side-by-side frame full screen on this display (e.g. the glasses) instead of in a window.
     var outputDisplay: CGDirectDisplayID?
 
     static let usage = """
-    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--display WxH] [--output ID] [--sbs]
+    XRealDesk [--host ADDR] [--seconds N] [--out DIR] [--snapshots T1,T2,...] [--layout NAME] [--output ID] [--sbs]
               [--test-pattern] [--probe | --sbs-check]
       --host       glasses address (default 169.254.2.1; 127.0.0.1 for tools/fake_glasses.py)
       --seconds    quit after N seconds
       --out        write log.txt and snapshot PNGs here
       --snapshots  save the rendered side-by-side frame at these seconds after launch
-      --display    virtual display size in pixels (default 1920x1080)
+      --layout     start with this layout (a preset such as "Three in a row", or a saved one) instead of the last
+                   one used
       --output     show the 3840×1080 side-by-side image full screen on this display ID (see the log's display
                    list) instead of in a half-size window
       --sbs        switch the glasses to side-by-side 3D at start; the original mode is restored on quit, and on the
                    next start if the app crashed
       --test-pattern  cover the virtual display with a grid and clock instead of showing its desktop (unattended
                    test runs)
-      --probe      create the virtual display, list displays, remove it and quit (no capture, no permissions)
+      --probe      create one virtual display, list displays, remove it and quit (no capture, no permissions)
       --sbs-check  read the glasses' mode, switch to side-by-side, read back, restore, read back, then quit;
                    exit 0 only if every step matched (no virtual display, no capture)
     """
@@ -62,13 +64,7 @@ struct Options {
                     guard let t = Double($0) else { throw OptionError("--snapshots needs numbers") }
                     return t
                 }
-            case "--display":
-                let parts = try value(a).split(separator: "x").compactMap { Int($0) }
-                guard parts.count == 2, parts.allSatisfy({ $0 >= 640 && $0 <= 7680 }) else {
-                    throw OptionError("--display needs WxH, e.g. 1920x1080")
-                }
-                displayWidth = parts[0]
-                displayHeight = parts[1]
+            case "--layout": layout = try value(a)
             case "--probe": probe = true
             case "--sbs": sbs = true
             case "--sbs-check": sbsCheck = true
@@ -113,8 +109,8 @@ enum Log {
     }
 }
 
-/// Active displays as "id WxH (main|virtual)" for the log.
-func describeDisplays(virtual: CGDirectDisplayID? = nil) -> String {
+/// Active displays as "id WxH (main|virtual)" for the log; "virtual" marks ours.
+func describeDisplays() -> String {
     var count: UInt32 = 0
     CGGetActiveDisplayList(0, nil, &count)
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
@@ -122,7 +118,7 @@ func describeDisplays(virtual: CGDirectDisplayID? = nil) -> String {
     return "\(count) active: " + ids.map { id in
         var s = "\(id) \(CGDisplayPixelsWide(id))x\(CGDisplayPixelsHigh(id))"
         if CGDisplayIsMain(id) != 0 { s += " main" }
-        if id == virtual { s += " virtual" }
+        if CGDisplayVendorNumber(id) == XRVirtualDisplay.vendorID { s += " virtual" }
         return s
     }.joined(separator: ", ")
 }

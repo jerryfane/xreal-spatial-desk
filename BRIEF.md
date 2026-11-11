@@ -99,6 +99,6 @@ The published capture is gzipped and its serial number is replaced by `REDACTED0
 1. Settle the hardware open questions above (needs the glasses): SBS on, native anchoring off, SET reply format, restore on exit.
 2. GlassesLink + HeadTracker against the fake glasses: stable yaw/pitch/roll, recenter, events.
 3. One virtual display captured and rendered in SBS on any external monitor, with head pose from the replay.
-4. Multiple screens, placement math, curved screens, layouts.
+4. Multiple screens, placement math, curved screens, layouts. **Done (v0.3.0):** one virtual display per screen, flat or curved (radius, width along the arc), a packed row 8° apart plus screens above/below, presets and saved layouts in `layouts.json`, macOS display arrangement following the layout. Creating, moving and removing screens by head and hotkey is milestone 5.
 5. Interaction: grab/move/create/remove, focus follows head, button mapping.
 6. Tuning on the glasses: latency and prediction, text sharpness, comfort.

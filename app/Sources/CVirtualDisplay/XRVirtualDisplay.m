@@ -39,6 +39,10 @@ static NSError *XRError(NSString *message) {
     id _display;
 }
 
++ (uint32_t)vendorID {
+    return 0x5844;  // "XD", not a real vendor
+}
+
 + (BOOL)isAvailable {
     return NSClassFromString(@"CGVirtualDisplay") && NSClassFromString(@"CGVirtualDisplayDescriptor")
         && NSClassFromString(@"CGVirtualDisplayMode") && NSClassFromString(@"CGVirtualDisplaySettings");
@@ -50,6 +54,7 @@ static NSError *XRError(NSString *message) {
                           refreshRate:(double)refreshRate
                                 hiDPI:(BOOL)hiDPI
                     sizeInMillimeters:(CGSize)size
+                         serialNumber:(uint32_t)serialNumber
                            terminated:(nullable void (^)(void))terminated
                                 error:(NSError *_Nullable *_Nullable)error {
     if (!(self = [super init])) return nil;
@@ -64,9 +69,9 @@ static NSError *XRError(NSString *message) {
     descriptor.maxPixelsWide = (unsigned int)(width * scale);
     descriptor.maxPixelsHigh = (unsigned int)(height * scale);
     descriptor.sizeInMillimeters = size;
-    descriptor.vendorID = 0x5844;   // "XD", not a real vendor
+    descriptor.vendorID = XRVirtualDisplay.vendorID;
     descriptor.productID = 0x0001;
-    descriptor.serialNum = 1;
+    descriptor.serialNum = serialNumber;
     if (terminated) {
         void (^handler)(void) = [terminated copy];
         descriptor.terminationHandler = ^(id a, id b) { handler(); };

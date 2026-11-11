@@ -12,14 +12,20 @@ NS_ASSUME_NONNULL_BEGIN
 /// Whether this macOS still has the private classes.
 + (BOOL)isAvailable;
 
+/// The vendor number every display made here reports (`CGDisplayVendorNumber`), so they can be told apart from
+/// real displays such as the glasses.
+@property(class, nonatomic, readonly) uint32_t vendorID;
+
 /// Creates and configures the display. Returns nil and sets `error` if the private API is missing or refuses.
-/// `terminated` runs (on the main queue) if the system ends the display.
+/// `serialNumber` tells several of our displays apart (macOS keys a display's arrangement and settings on vendor,
+/// product and serial). `terminated` runs (on the main queue) if the system ends the display.
 - (nullable instancetype)initWithName:(NSString *)name
                                 width:(NSUInteger)width
                                height:(NSUInteger)height
                           refreshRate:(double)refreshRate
                                 hiDPI:(BOOL)hiDPI
                     sizeInMillimeters:(CGSize)size
+                         serialNumber:(uint32_t)serialNumber
                            terminated:(nullable void (^)(void))terminated
                                 error:(NSError *_Nullable *_Nullable)error;
 

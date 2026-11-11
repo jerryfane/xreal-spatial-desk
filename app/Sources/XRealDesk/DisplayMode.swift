@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import CVirtualDisplay
 import GlassesLink
 import XRealCore
 
@@ -13,15 +14,15 @@ struct GlassesDisplay: Equatable {
 
     var description: String { "display \(id) \(pixelWidth)x\(pixelHeight) (\(mode.map { "\($0)" } ?? "unknown mode"))" }
 
-    /// The single display that looks like the glasses, or nil (none, or several, which would be a guess).
-    /// `excluding` is our own virtual display, which is also 1920×1080.
-    static func find(excluding: CGDirectDisplayID?) -> GlassesDisplay? {
+    /// The single display that looks like the glasses, or nil (none, or several, which would be a guess). Our own
+    /// virtual displays (which can also be 1920×1080 or 3840×1080) are recognised by their vendor number.
+    static func find() -> GlassesDisplay? {
         var count: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetOnlineDisplayList(count, &ids, &count)
         let candidates: [GlassesDisplay] = ids.compactMap { id in
-            guard id != excluding, CGDisplayIsBuiltin(id) == 0, CGDisplayIsActive(id) != 0,
+            guard CGDisplayVendorNumber(id) != XRVirtualDisplay.vendorID, CGDisplayIsBuiltin(id) == 0, CGDisplayIsActive(id) != 0,
                   let m = CGDisplayCopyDisplayMode(id), m.pixelHeight == 1080,
                   m.pixelWidth == 1920 || m.pixelWidth == 3840 else { return nil }
             return GlassesDisplay(id: id, pixelWidth: m.pixelWidth, pixelHeight: m.pixelHeight)
@@ -131,7 +132,7 @@ final class DisplayModeController: @unchecked Sendable {
     /// not seen side-by-side any more, or after a timeout. Whether or not anything is sent here: a restore started
     /// earlier (menu toggle) may have been accepted while the glasses are still re-enumerating (~2.4 s after the
     /// reply), and until they finish the caller must keep them covered.
-    func restoreBlocking(excluding virtual: CGDirectDisplayID?, timeout: TimeInterval = 3) {
+    func restoreBlocking(timeout: TimeInterval = 3) {
         if let mode = keeper.restore() {
             let reply = sendAndWait(why: "restore", timeout: timeout)
             if reply?.result != .accepted {
@@ -144,19 +145,19 @@ final class DisplayModeController: @unchecked Sendable {
         guard let original = keeper.awaitingPhysicalRestore else { return }
         let deadline = Date(timeIntervalSinceNow: 6)
         while Date() < deadline {
-            if let mode = GlassesDisplay.find(excluding: virtual)?.mode { keeper.glassesObserved(mode) }
+            if let mode = GlassesDisplay.find()?.mode { keeper.glassesObserved(mode) }
             if keeper.awaitingPhysicalRestore == nil { break }
             Thread.sleep(forTimeInterval: 0.25)
         }
         if keeper.awaitingPhysicalRestore != nil { Log.line("display mode: glasses not seen back in \(original) within 6 s") }
-        Log.line("display mode: on quit the glasses are \(GlassesDisplay.find(excluding: virtual)?.description ?? "not identified: \(describeDisplays())")")
+        Log.line("display mode: on quit the glasses are \(GlassesDisplay.find()?.description ?? "not identified: \(describeDisplays())")")
     }
 
     /// Polls until the glasses display shows `mode` (the glasses re-enumerate after a switch).
-    static func waitForGlasses(_ mode: DisplayInputMode, excluding: CGDirectDisplayID?, timeout: TimeInterval) -> GlassesDisplay? {
+    static func waitForGlasses(_ mode: DisplayInputMode, timeout: TimeInterval) -> GlassesDisplay? {
         let deadline = Date(timeIntervalSinceNow: timeout)
         repeat {
-            if let g = GlassesDisplay.find(excluding: excluding), g.mode == mode { return g }
+            if let g = GlassesDisplay.find(), g.mode == mode { return g }
             Thread.sleep(forTimeInterval: 0.25)
         } while Date() < deadline
         return nil
@@ -168,7 +169,7 @@ final class DisplayModeController: @unchecked Sendable {
     func runCheck() -> Bool {
         func step(_ s: String) { Log.line("sbs-check: \(s)") }
         guard waitForControl(timeout: 15) else { step("RESULT FAIL: glasses control channel not connected"); return false }
-        guard let before = GlassesDisplay.find(excluding: nil) else {
+        guard let before = GlassesDisplay.find() else {
             step("RESULT FAIL: glasses display not identified: \(describeDisplays())"); return false
         }
         step("1 read mode: \(before.description)")
@@ -181,7 +182,7 @@ final class DisplayModeController: @unchecked Sendable {
         step("2 set side-by-side: reply \(reply.map { "\(hex($0.body)) → \($0.result)" } ?? "none")")
         var ok = reply?.result == .accepted
         if ok {
-            let after = DisplayModeController.waitForGlasses(.sideBySide, excluding: nil, timeout: 15)
+            let after = DisplayModeController.waitForGlasses(.sideBySide, timeout: 15)
             step("3 read back: \(after?.description ?? "no 3840x1080 glasses display within 15 s: \(describeDisplays())")")
             ok = after != nil
             if ok { Thread.sleep(forTimeInterval: 5) }
@@ -190,7 +191,7 @@ final class DisplayModeController: @unchecked Sendable {
         _ = keeper.restore()
         let restore = sendAndWait(why: "check step 4")
         step("4 restore regular: reply \(restore.map { "\(hex($0.body)) → \($0.result)" } ?? "none")")
-        let back = DisplayModeController.waitForGlasses(.regular, excluding: nil, timeout: 15)
+        let back = DisplayModeController.waitForGlasses(.regular, timeout: 15)
         step("5 read back: \(back?.description ?? "no 1920x1080 glasses display within 15 s: \(describeDisplays())")")
         let all = ok && restore?.result == .accepted && back != nil
         step("RESULT \(all ? "PASS" : "FAIL")")
