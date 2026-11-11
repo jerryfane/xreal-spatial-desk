@@ -275,7 +275,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let id = display.displayID, w = options.displayWidth, h = options.displayHeight
         let own = Set([renderWindow?.windowNumber].compactMap { $0 })
         Task { @MainActor in
-            await placeContentWindow()
+            if options.testPattern { await placeContentWindow() }
             do {
                 try await capture.start(displayID: id, width: w, height: h, excluding: own)
                 self.captureStatus = "Capture: running"
@@ -288,7 +288,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A window on the virtual display, so the captured content is recognisable and keeps changing. On a Mac without
+    /// With --test-pattern: a window covering the virtual display, so the captured content is recognisable and keeps
+    /// changing in unattended runs. Without it the display shows its own desktop. On a Mac without
     /// a monitor the virtual display is the only one and also holds the render window; then the pattern takes the
     /// lower half so it does not cover the render window (an occluded window gets fewer frames).
     private func placeContentWindow() async {

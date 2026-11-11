@@ -89,12 +89,12 @@ case $mode in
     fake=$!
     for _ in $(seq 120); do grep -q 'serving fake glasses' "$run/fake.log" && break; sleep 0.5; done
     if [[ $mode == run ]]; then
-      appargs=(--host 127.0.0.1 --seconds 60 --snapshots 10,20,30,45,55)
+      appargs=(--host 127.0.0.1 --seconds 60 --snapshots 10,20,30,45,55 --test-pattern)
       echo "== app start UTC $(date -u +%FT%TZ)"
       launch -n -W
       echo "== app end UTC $(date -u +%FT%TZ)"
     else
-      appargs=(--host 127.0.0.1 --seconds 60)
+      appargs=(--host 127.0.0.1 --seconds 60 --test-pattern)
       echo "== app start UTC $(date -u +%FT%TZ)"
       launch -n
       sleep 8
