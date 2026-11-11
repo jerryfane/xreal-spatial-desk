@@ -25,9 +25,11 @@ final class ScreenSlot {
         self.pixelHeight = pixelHeight
         self.display = display
         self.capture = capture
+        displayID = display.displayID
     }
 
-    var displayID: CGDirectDisplayID { display.displayID }
+    /// Kept from creation: `XRVirtualDisplay.displayID` reads as kCGNullDirectDisplay once invalidated.
+    let displayID: CGDirectDisplayID
 }
 
 /// Menu bar app: the layout's screens as virtual displays, captured and shown as head-tracked screens in a
@@ -86,6 +88,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
                                                queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
+                OwnDisplays.pruneRetired()
                 _ = self?.placeRenderWindow(.displaysChanged)
                 self?.arrangeDisplays()
             }
@@ -182,6 +185,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Log.line("virtual display: screen \(s.id) FAILED: no display id")
                 return nil
             }
+            OwnDisplays.add(d.displayID)
+            Log.line("virtual display: screen \(s.id) id \(d.displayID) reports vendor \(String(format: "0x%04x", CGDisplayVendorNumber(d.displayID)))")
             Log.line("virtual display: screen \(s.id) created id \(d.displayID) \(s.pixelWidth)x\(s.pixelHeight)")
             return d
         } catch {
@@ -197,6 +202,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let capture = slot.capture { Task { await capture.stop() } }
         slot.display.invalidate()
         Log.line("virtual display: screen \(slot.id) removed")
+        // WindowServer drops the display a moment later; until it is seen gone it must not count as the glasses.
+        OwnDisplays.retire(slot.displayID)
     }
 
     /// Puts our displays in macOS's arrangement the way they sit around the head (see `DisplayArrangement`), for this
@@ -663,6 +670,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for slot in slots.values { slot.contentWindow?.contentView?.needsDisplay = true }
         // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
         // target with no screen notification after them (e.g. a restore accepted after the display already changed).
+        OwnDisplays.pruneRetired()
         placeRenderWindow(.periodicCheck)
         updateStatus()
     }

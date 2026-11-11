@@ -116,7 +116,7 @@ asked, one setting: side-by-side input mode (below).
    resolution, adds or removes screens; **Save current layout as…** keeps the arrangement for next time. Each new
    display briefly blanks the others while macOS rearranges.
 
-`/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, the exact mode-switch frames and replies,
+The log (`~/Library/Logs/XRealDesk/log.txt`, replaced each run; or `log.txt` in the `--out` folder) records connection, GET replies, the exact mode-switch frames and replies,
 buttons, wear events and frame rates.
 
 ### First side-by-side run (checks the mode switch step by step)
