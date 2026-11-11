@@ -739,6 +739,24 @@ enum PlacementTrigger: String {
     var logsMissingDisplay: Bool { self != .periodicCheck }
 }
 
+/// A menu item that runs a closure (menus are rebuilt each time they open, so no selectors per item).
+final class ActionItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, key: String = "", checked: Bool = false, enabled: Bool = true, _ handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: key)
+        target = self
+        state = checked ? .on : .off
+        isEnabled = enabled
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func run() { handler() }
+}
+
 /// Borderless windows cannot normally become key; this one must, so Esc reaches the app while it covers the glasses.
 final class KeyableWindow: NSWindow {
     override var canBecomeKey: Bool { true }
