@@ -19,10 +19,11 @@ enum OwnDisplays {
 
     /// Forgets retired displays no longer online (call on every display change).
     static func pruneRetired() {
+        // Forget nothing unless the list is known: a failed query would make every retired display look gone.
         var count: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &count)
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return }
         var online = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        CGGetOnlineDisplayList(count, &online, &count)
+        guard CGGetOnlineDisplayList(count, &online, &count) == .success else { return }
         let present = Set(online.prefix(Int(count)))
         lock.withLock {
             let gone = retired.subtracting(present)
