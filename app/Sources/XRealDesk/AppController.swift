@@ -211,8 +211,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetActiveDisplayList(count, &ids, &count)
         let others = ids.filter { !ours.contains($0) }
-        guard ours.isSubset(of: Set(ids)), let first = others.first else { return }
-        let box = others.dropFirst().reduce(CGDisplayBounds(first)) { $0.union(CGDisplayBounds($1)) }
+        guard ours.isSubset(of: Set(ids)) else { return }
+        // With no other display (a Mac without a monitor, where ours replace the placeholder), the row starts at the
+        // origin; the display put there becomes the main display.
+        let box = others.isEmpty ? CGRect.zero
+            : others.dropFirst().reduce(CGDisplayBounds(others[0])) { $0.union(CGDisplayBounds($1)) }
         let items = layout.screens.compactMap { s -> DisplayArrangement.Item? in
             guard let id = slots[s.id]?.displayID else { return nil }
             let b = CGDisplayBounds(id)

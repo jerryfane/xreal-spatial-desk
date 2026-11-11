@@ -181,5 +181,29 @@ final class RendererTests: XCTestCase {
             XCTAssertEqual(image.bgra(Int(farEdge.u / 2), Int(farEdge.v / 2)), blue, "the far screen shows around the near one")
         }
     }
+
+    // Issue #15: two screens that cut through each other. Whichever is nearer along each line of sight must show,
+    // whatever order they are drawn in.
+    func testIntersectingScreensShowWhicheverIsNearerAtEachPoint() throws {
+        let red: [UInt8] = [0, 0, 255, 255], blue: [UInt8] = [255, 0, 0, 255]
+        let size = SpatialScreen(id: 1, diagonalInches: 85).placement
+        let row = ScreenPlacement(distance: 1.5, width: size.width, height: size.height)
+        var upper = row
+        upper.pitch = 25
+        let head = HeadPose(yaw: 0, pitch: 12, roll: 0).quaternion  // both sight lines inside the 24.7° view
+        // Along 8° up the row screen (z = 1.5) is nearer; along 17° up the upper one is.
+        func hit(_ elevation: Double, distance: Double) throws -> (x: Int, y: Int) {
+            let point = HeadPose(yaw: 0, pitch: elevation, roll: 0).quaternion.rotate(Vec3(0, 0, distance))
+            let px = try XCTUnwrap(displays.left.pixel(of: point, head: head, width: displays.width, height: displays.height))
+            return (Int(px.u / 2), Int(px.v / 2))
+        }
+        let rad = Double.pi / 180
+        let low = try hit(8, distance: 1.5 / cos(8 * rad)), high = try hit(17, distance: 1.5 / cos(8 * rad))
+        for order in [[(row, red), (upper, blue)], [(upper, blue), (row, red)]] {
+            let image = try render(head: head, screens: order.map { Renderer.Screen(placement: $0.0, texture: solid($0.1)) })
+            XCTAssertEqual(image.bgra(low.x, low.y), red, "row screen in front at 8°, drawn \(order.map(\.0.pitch))")
+            XCTAssertEqual(image.bgra(high.x, high.y), blue, "upper screen in front at 17°, drawn \(order.map(\.0.pitch))")
+        }
+    }
 }
 #endif

@@ -172,7 +172,7 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(o[14].map { [$0.x, $0.y] }, [1512 + 2560, 0])
         XCTAssertEqual(o[10].map { [$0.x, $0.y] }, [1512 + 2560 + 1920, 0])
         XCTAssertEqual(o[12].map { [$0.x, $0.y] }, [1512 + 2560, -1080], "on top of the row display at its yaw")
-        XCTAssertEqual(o[13].map { [$0.x, $0.y] }, [1512 + 2560, 1440], "under it, below the tallest row display")
+        XCTAssertEqual(o[13].map { [$0.x, $0.y] }, [1512 + 2560, 1080], "directly under it (not under the taller display 11)")
 
         // Two screens above, both nearest the same row display: the second is pushed right, not overlapping.
         let two = DisplayArrangement.origins([
@@ -191,5 +191,15 @@ final class LayoutTests: XCTestCase {
         ], rightOf: (x: 0, y: 0, width: 2560, height: 1440))
         XCTAssertEqual(wide[2].map { [$0.x, $0.y] }, [2560, 1080])
         XCTAssertEqual(wide[3].map { [$0.x, $0.y] }, [2560, -1080])
+
+        // Row of mixed heights: a screen below sits under the row displays it spans, not under the tallest anywhere.
+        let mixed = DisplayArrangement.origins([
+            Item(id: 1, yaw: 0, pitch: 0, width: 1920, height: 1080),
+            Item(id: 2, yaw: 30, pitch: 0, width: 1080, height: 1920),
+            Item(id: 3, yaw: 0, pitch: -25, width: 1920, height: 1080),
+            Item(id: 4, yaw: 30, pitch: -25, width: 1920, height: 1080),
+        ], rightOf: (x: 0, y: 0, width: 1000, height: 800))
+        XCTAssertEqual(mixed[3].map { [$0.x, $0.y] }, [1000, 1080], "directly under display 1")
+        XCTAssertEqual(mixed[4].map { [$0.x, $0.y] }, [1000 + 1920, 1920], "under the portrait display it spans")
     }
 }
