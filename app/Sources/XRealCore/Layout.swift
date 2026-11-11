@@ -336,6 +336,9 @@ public struct GazeFocus: Sendable {
         self.dwell = dwell
     }
 
+    /// Forgets a dwell in progress (following paused, or no pointer position): the next target needs a full dwell.
+    public mutating func reset() { candidate = nil }
+
     /// - Parameters:
     ///   - looking: the screen the gaze is on, if any.
     ///   - pointer: the screen the pointer is on, if it is on one of ours.
