@@ -71,23 +71,28 @@ extension EyeCalibration {
     }
 }
 
-/// A flat virtual screen floating in the world frame (X right, Y down, Z forward at the recentered heading).
+/// A virtual screen floating in the world frame (X right, Y down, Z forward at the recentered heading): flat, or bent
+/// around a vertical axis like a curved monitor, edges toward the viewer.
 public struct ScreenPlacement: Equatable, Sendable {
     /// Direction of the screen centre from the head, degrees (same sign conventions as HeadPose).
     public var yaw: Double
     public var pitch: Double
     /// Metres from the head to the screen centre.
     public var distance: Double
-    /// Metres.
+    /// Metres, measured along the surface (a curved screen keeps its flat width, like a real curved monitor).
     public var width: Double
     public var height: Double
+    /// Radius of the curve in metres (1.8 = an "1800R" monitor); 0 = flat.
+    public var curveRadius: Double
 
-    public init(yaw: Double = 0, pitch: Double = 0, distance: Double = 1.6, width: Double = 0.9, height: Double = 0.50625) {
+    public init(yaw: Double = 0, pitch: Double = 0, distance: Double = 1.6, width: Double = 0.9, height: Double = 0.50625,
+                curveRadius: Double = 0) {
         self.yaw = yaw
         self.pitch = pitch
         self.distance = distance
         self.width = width
         self.height = height
+        self.curveRadius = curveRadius
     }
 
     /// The screen faces the head: its local frame is the head frame turned by (yaw, pitch).
@@ -95,17 +100,36 @@ public struct ScreenPlacement: Equatable, Sendable {
 
     public var center: Vec3 { orientation.rotate(Vec3(0, 0, distance)) }
 
-    /// Quad → world. The quad spans x, y ∈ [−0.5, 0.5] with +x right and +y down (image orientation), z = 0.
-    public var model: Mat4 {
-        let scale = Mat4(rows: [[width, 0, 0, 0], [0, height, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-        return Mat4(rotation: orientation, translation: center) * scale
+    /// Screen-local → world: the local frame has +x right, +y down (image orientation), +z away from the viewer, and
+    /// its origin at the screen centre.
+    public var pose: Mat4 { Mat4(rotation: orientation, translation: center) }
+
+    /// Curve angle across the whole width, radians (0 = flat). The renderer's vertex shader uses the same formula as
+    /// `localPoint`.
+    public var arc: Double { curveRadius > 0 ? width / curveRadius : 0 }
+
+    /// Screen-local point (metres) for surface coordinates x, y ∈ [−0.5, 0.5] (+x right, +y down).
+    public func localPoint(x: Double, y: Double) -> Vec3 {
+        guard curveRadius > 0 else { return Vec3(x * width, y * height, 0) }
+        let a = x * arc
+        return Vec3(curveRadius * sin(a), y * height, -curveRadius * (1 - cos(a)))
+    }
+
+    /// World point for surface coordinates x, y ∈ [−0.5, 0.5].
+    public func point(x: Double, y: Double) -> Vec3 {
+        let p = pose.apply(localPoint(x: x, y: y))
+        return Vec3(p.x, p.y, p.z)
     }
 
     /// Corners in world space: top-left, top-right, bottom-left, bottom-right.
     public var corners: [Vec3] {
-        [(-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)].map { x, y in
-            let p = model.apply(Vec3(x, y, 0))
-            return Vec3(p.x, p.y, p.z)
-        }
+        [(-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)].map { point(x: $0, y: $1) }
+    }
+
+    /// Horizontal and vertical angle the screen covers, seen from the head, degrees.
+    public var angularSize: (width: Double, height: Double) {
+        let edge = localPoint(x: 0.5, y: 0)
+        let halfWidth = atan2(edge.x, distance + edge.z)
+        return (2 * halfWidth * 180 / .pi, 2 * atan2(height / 2, distance) * 180 / .pi)
     }
 }

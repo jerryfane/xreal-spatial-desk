@@ -50,10 +50,24 @@ final class RendererTests: XCTestCase {
     }
 
     func render(head: Quat, screen: ScreenPlacement = ScreenPlacement(), texture: MTLTexture?) throws -> Image {
+        try render(head: head, screens: [Renderer.Screen(placement: screen, texture: texture)])
+    }
+
+    func render(head: Quat, screens: [Renderer.Screen]) throws -> Image {
         // Half resolution keeps the test fast; the projection scales with the viewport.
         let w = 1920, h = 540
-        let scene = Renderer.Scene(displays: displays, head: head, screen: screen, texture: texture)
+        let scene = Renderer.Scene(displays: displays, head: head, screens: screens)
         return Image(bytes: try renderer.renderOffscreen(scene, width: w, height: h), width: w, height: h)
+    }
+
+    /// Pixel bounds (full panel resolution) of a screen's outline in one eye, from the calibration.
+    func expectedBox(_ screen: ScreenPlacement, eye: EyeCalibration) throws -> (minU: Double, maxU: Double, minV: Double, maxV: Double) {
+        let steps = (0...64).map { Double($0) / 64 - 0.5 }
+        let outline = steps.flatMap { t in [screen.point(x: t, y: -0.5), screen.point(x: t, y: 0.5),
+                                            screen.point(x: -0.5, y: t), screen.point(x: 0.5, y: t)] }
+        let px = outline.compactMap { eye.pixel(of: $0, head: .identity, width: displays.width, height: displays.height) }
+        XCTAssertEqual(px.count, outline.count)
+        return (px.map(\.u).min()!, px.map(\.u).max()!, px.map(\.v).min()!, px.map(\.v).max()!)
     }
 
     func testScreenAppearsInBothEyesWhereTheCalibrationProjectsIt() throws {
@@ -127,6 +141,45 @@ final class RendererTests: XCTestCase {
     func testNothingIsDrawnWithoutCalibration() throws {
         let bytes = try renderer.renderOffscreen(nil, width: 64, height: 32)
         XCTAssertTrue(stride(from: 0, to: bytes.count, by: 4).allSatisfy { bytes[$0] == 0 && bytes[$0 + 1] == 0 && bytes[$0 + 2] == 0 })
+    }
+
+    func testCurvedScreenIsDrawnOnItsCurve() throws {
+        let flat = ScreenPlacement(distance: 1.6, width: 0.9, height: 0.5)
+        var curved = flat
+        curved.curveRadius = 1.0
+        let tex = solid([255, 255, 255, 255])
+        let flatBox = try XCTUnwrap(render(head: .identity, screen: flat, texture: tex).litBox(columns: 0..<960))
+        let image = try render(head: .identity, screen: curved, texture: tex)
+        for (i, eye) in [displays.left, displays.right].enumerated() {
+            let box = try XCTUnwrap(image.litBox(columns: (i * 960)..<(i * 960 + 960)))
+            let e = try expectedBox(curved, eye: eye)
+            XCTAssertEqual(Double(box.minX - i * 960), e.minU / 2, accuracy: 2)
+            XCTAssertEqual(Double(box.maxX - i * 960), e.maxU / 2, accuracy: 2)
+            XCTAssertEqual(Double(box.minY), e.minV / 2, accuracy: 2)
+            XCTAssertEqual(Double(box.maxY), e.maxV / 2, accuracy: 2)
+        }
+        // The edges come toward the viewer: taller at the sides than the flat screen, and wider in view.
+        let left = try XCTUnwrap(image.litBox(columns: 0..<960))
+        XCTAssertGreaterThan(flatBox.minY - left.minY, 3)
+        XCTAssertGreaterThan(left.maxX - left.minX, flatBox.maxX - flatBox.minX)
+    }
+
+    func testEveryScreenIsDrawnAndTheNearerOneCoversTheFartherOne() throws {
+        let red: [UInt8] = [0, 0, 255, 255], blue: [UInt8] = [255, 0, 0, 255], green: [UInt8] = [0, 255, 0, 255]
+        let near = Renderer.Screen(placement: ScreenPlacement(distance: 1.2, width: 0.2, height: 0.12), texture: solid(red))
+        let far = Renderer.Screen(placement: ScreenPlacement(distance: 2.5, width: 1.0, height: 0.5), texture: solid(blue))
+        let side = Renderer.Screen(placement: ScreenPlacement(yaw: -14, distance: 1.6, width: 0.2, height: 0.12), texture: solid(green))
+        for order in [[near, far, side], [far, side, near]] {
+            let image = try render(head: .identity, screens: order)
+            for (screen, colour) in [(near, red), (side, green)] {
+                let c = try XCTUnwrap(displays.left.pixel(of: screen.placement.center, head: .identity,
+                                                          width: displays.width, height: displays.height))
+                XCTAssertEqual(image.bgra(Int(c.u / 2), Int(c.v / 2)), colour, "order \(order.map(\.placement.distance))")
+            }
+            let farEdge = try XCTUnwrap(displays.left.pixel(of: far.placement.point(x: 0.4, y: 0), head: .identity,
+                                                            width: displays.width, height: displays.height))
+            XCTAssertEqual(image.bgra(Int(farEdge.u / 2), Int(farEdge.v / 2)), blue, "the far screen shows around the near one")
+        }
     }
 }
 #endif

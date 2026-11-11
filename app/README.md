@@ -1,7 +1,7 @@
 # app/: XReal Desk (Swift package)
 
-Milestones 2 and 3 of [BRIEF.md](../BRIEF.md): talk to the glasses, track the head, and show one virtual display
-in 3D as a side-by-side image.
+Milestones 1–4 of [BRIEF.md](../BRIEF.md): talk to the glasses, track the head, switch them to side-by-side, and
+show several virtual displays around you in 3D, flat or curved, in saved layouts.
 
 | Target | What it does |
 |---|---|
@@ -10,10 +10,10 @@ in 3D as a side-by-side image.
 | `CaptureTools` | Loads a `captures/` recording and measures tracking against its recorded steps. Tests and CLI only. |
 | `xreal-track` | CLI: `live`, `measure` (against `tools/fake_glasses.py`), `replay` (offline). |
 | `CVirtualDisplay` | Objective-C wrapper for the private `CGVirtualDisplay` API (macOS only). |
-| `XRealDesk` | Menu bar app (macOS 14+): one virtual display → ScreenCaptureKit → Metal 3840×1080 side-by-side render, placed with the head pose. |
+| `XRealDesk` | Menu bar app (macOS 14+): one virtual display per screen of the layout → ScreenCaptureKit → Metal 3840×1080 side-by-side render of every screen, placed with the head pose. |
 
-The package only builds requests from `GetCommand`, which lists the five GETs verified in BRIEF.md. There is no
-code path that sends a SET or any other command.
+The package builds GET requests only from `GetCommand`, which lists the five GETs verified in BRIEF.md. The only SET
+is `DisplayInputMode` (`0x2822`, side-by-side on/off), sent only when asked and always switched back.
 
 ## Run
 
@@ -53,19 +53,31 @@ swift build --product XRealDesk
 XRealDesk.app/Contents/MacOS/XRealDesk --host 127.0.0.1 --seconds 60 --out run/ --snapshots 10,30
 ```
 
-On launch it creates one 1920×1080 virtual display (private `CGVirtualDisplay`, as DeskPad/BetterDisplay do), puts a
-test pattern window on it, captures it with ScreenCaptureKit and renders it with Metal as one flat screen 1.6 m ahead,
-0.9 m wide, for both eyes (left half: left eye, right half: right eye), using the factory intrinsics and eye poses and
-the head orientation from `HeadTracker`. The 3840×1080 image is shown in a half-size window, or full screen on a chosen
-display with `--output ID` (for example the glasses' display). Black is see-through on the glasses.
+On launch it creates one virtual display per screen of the current layout (private `CGVirtualDisplay`, as
+DeskPad/BetterDisplay do), captures each with ScreenCaptureKit and renders them with Metal at their places around you
+(flat or curved), for both eyes (left half: left eye, right half: right eye), using the factory intrinsics and eye
+poses and the head orientation from `HeadTracker`. Each display is a real macOS desktop: drag windows onto it. The
+3840×1080 image is shown in a half-size window, or full screen on a chosen display with `--output ID` (for example
+the glasses' display). Black is see-through on the glasses.
 
-- Menu bar item "XR": head pose, virtual display, capture/render rate, **Recenter**, **Quit**. `r` in the render
-  window also recenters. Tracking recenters itself 0.5 s after it starts.
-- The virtual display is removed on Quit, `--seconds`, SIGTERM/SIGINT/SIGHUP, and by WindowServer when the process
-  dies (crash, `kill -9`).
+- Menu bar item "XR": head pose, layout, capture/render rate, **Recenter**, **Side-by-side 3D**, **Screens**,
+  **Layouts**, **Quit**. `r` in the render window also recenters. Tracking recenters itself 0.5 s after it starts.
+- **Screens:** each screen's size (diagonal, like a monitor), distance, shape (flat or 4000R…1000R curved),
+  resolution and position (in the row, above, below); **Add screen** (up to six), **Remove**. Screens in the row sit
+  side by side, 8° apart; the one straight ahead stays put and the others move aside when it grows or curves (a
+  curved screen keeps its width along the curve, so it wraps more of your view).
+- **Layouts:** presets *One screen*, *Three in a row*, *Desk (four screens)*; **Save current layout as…** and the saved
+  layouts. The current and saved layouts are kept in `~/Library/Application Support/XRealDesk/layouts.json`; an
+  unreadable file is renamed `layouts.json.bad` and the app starts with one screen. `--layout NAME` starts with a
+  given layout.
+- macOS's display arrangement follows the layout (for the session): the row left to right in yaw order, right of
+  your other displays; screens above or below the row above or below it. So the pointer leaves one screen for the
+  next the way they sit around you.
+- The virtual displays are removed on Quit, `--seconds`, SIGTERM/SIGINT/SIGHUP, and by WindowServer when the process
+  dies (crash, `kill -9`). `--test-pattern` covers each with a grid and clock for unattended runs.
 - **Screen Recording permission** is needed for the capture. If it is missing, the app asks macOS to show its prompt and
   logs exactly what to grant: System Settings › Privacy & Security › Screen & System Audio Recording › XRealDesk, then
-  restart the app. Until then the renderer shows a checkerboard in place of the display.
+  restart the app. Until then the renderer shows a checkerboard in place of each display.
 - No Accessibility permission is used yet.
 - On a Mac without a monitor (such as a headless Mac Studio), the virtual display replaces the system's placeholder
   display while it exists, so the desktop and any Screen Sharing view move onto it.
@@ -99,6 +111,10 @@ asked, one setting: side-by-side input mode (below).
    all of them, so neither eye sees the desktop. **Esc** quits at any time (the image may cover your only screen).
    Choosing the menu item again, or quitting, switches the glasses back; so does unplugging them, and the next start
    if the app crashed.
+7. **Several screens.** **XR** › **Layouts** › *Three in a row* (or *Desk*) adds displays; each is a real macOS
+   desktop, so drag windows onto them. **XR** › **Screens** changes one screen's size, distance, shape and
+   resolution, adds or removes screens; **Save current layout as…** keeps the arrangement for next time. Each new
+   display briefly blanks the others while macOS rearranges.
 
 `/tmp/xreal-run/log.txt` (with `--out`) records connection, GET replies, the exact mode-switch frames and replies,
 buttons, wear events and frame rates.
