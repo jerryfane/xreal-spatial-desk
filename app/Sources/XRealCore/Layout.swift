@@ -189,20 +189,36 @@ public struct LayoutLibrary: Codable, Equatable, Sendable {
         saved.append(layout)
     }
 
-    /// Reads the library. A missing file gives the default; an unreadable one is renamed to `layouts.json.bad`
-    /// (kept for the user, out of the way) and also gives the default, with the reason.
-    public static func load(from url: URL = defaultURL) -> (library: LayoutLibrary, problem: String?) {
-        guard let data = try? Data(contentsOf: url) else { return (LayoutLibrary(), nil) }
+    public struct Loaded {
+        public var library: LayoutLibrary
+        /// Why the file was not used, if it exists and was not.
+        public var problem: String?
+        /// False when an existing file could neither be used nor moved aside: writing would destroy it.
+        public var safeToWrite: Bool
+    }
+
+    /// Reads the library. A missing file gives the default. A file that cannot be read or decoded is renamed to
+    /// `layouts.json.bad` (kept for the user, out of the way) and also gives the default, with the reason; if it
+    /// cannot be renamed either, `safeToWrite` is false.
+    public static func load(from url: URL = defaultURL) -> Loaded {
+        guard FileManager.default.fileExists(atPath: url.path) else { return Loaded(library: LayoutLibrary(), safeToWrite: true) }
+        let reason: String
         do {
-            var l = try JSONDecoder().decode(LayoutLibrary.self, from: data)
+            var l = try JSONDecoder().decode(LayoutLibrary.self, from: Data(contentsOf: url))
             l.current = l.current.sanitized
             l.saved = l.saved.map(\.sanitized)
-            return (l, nil)
+            return Loaded(library: l, safeToWrite: true)
         } catch {
-            let bad = url.appendingPathExtension("bad")
-            try? FileManager.default.removeItem(at: bad)
-            try? FileManager.default.moveItem(at: url, to: bad)
-            return (LayoutLibrary(), "\(url.lastPathComponent) unreadable (\(error)); moved to \(bad.lastPathComponent)")
+            reason = "\(url.lastPathComponent) unusable (\(error))"
+        }
+        let bad = url.appendingPathExtension("bad")
+        do {
+            if FileManager.default.fileExists(atPath: bad.path) { try FileManager.default.removeItem(at: bad) }
+            try FileManager.default.moveItem(at: url, to: bad)
+            return Loaded(library: LayoutLibrary(), problem: "\(reason); moved to \(bad.lastPathComponent)", safeToWrite: true)
+        } catch {
+            return Loaded(library: LayoutLibrary(), problem: "\(reason); could not move it aside (\(error)), so layouts will not be saved this run",
+                          safeToWrite: false)
         }
     }
 
@@ -216,7 +232,8 @@ public struct LayoutLibrary: Codable, Equatable, Sendable {
 
 /// Where macOS should put our virtual displays in its arrangement, so the pointer moves between them the way they
 /// sit around the head: the row left to right in yaw order, right of the other displays and top-aligned with them;
-/// screens above the row in a second row on top of it, screens below in one under it.
+/// a screen above (below) the row sits on top of (under) the row display nearest its yaw, centred on it, pushed
+/// right only as far as needed to clear the one before it in its band.
 public enum DisplayArrangement {
     public struct Item: Equatable, Sendable {
         public var id: UInt32
@@ -245,16 +262,24 @@ public enum DisplayArrangement {
         let left = others.x + others.width, top = others.y
         let rowHeight = row.map(\.height).max() ?? 0
         var out: [UInt32: (x: Int, y: Int)] = [:]
-        func lay(_ items: [Item], y: (Item) -> Int) {
-            var x = left
+        var x = left
+        for i in row {
+            out[i.id] = (x, top)
+            x += i.width
+        }
+        func band(_ items: [Item], y: (Item) -> Int) {
+            var end = Int.min
             for i in items {
-                out[i.id] = (x, y(i))
-                x += i.width
+                // Centred on the nearest row display, else from the left edge.
+                let under = row.min { abs($0.yaw - i.yaw) < abs($1.yaw - i.yaw) }
+                let centred = under.map { out[$0.id]!.x + ($0.width - i.width) / 2 } ?? left
+                let ix = max(centred, end)
+                out[i.id] = (ix, y(i))
+                end = ix + i.width
             }
         }
-        lay(row) { _ in top }
-        lay(above) { top - $0.height }
-        lay(below) { _ in top + rowHeight }
+        band(above) { top - $0.height }
+        band(below) { _ in top + rowHeight }
         return out
     }
 }

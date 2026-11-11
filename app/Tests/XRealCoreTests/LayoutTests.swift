@@ -128,6 +128,7 @@ final class LayoutTests: XCTestCase {
         let missing = LayoutLibrary.load(from: url)
         XCTAssertEqual(missing.library, LayoutLibrary())
         XCTAssertNil(missing.problem)
+        XCTAssertTrue(missing.safeToWrite)
 
         var lib = LayoutLibrary(current: .desk)
         var mine = Layout.threeInARow
@@ -143,8 +144,17 @@ final class LayoutTests: XCTestCase {
         let broken = LayoutLibrary.load(from: url)
         XCTAssertEqual(broken.library, LayoutLibrary())
         XCTAssertNotNil(broken.problem)
+        XCTAssertTrue(broken.safeToWrite)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertEqual(try Data(contentsOf: url.appendingPathExtension("bad")), Data("{ not json".utf8), "kept for the user")
+
+        // Exists but cannot be read (here a directory): reported and kept aside too, not treated as missing.
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        let unreadable = LayoutLibrary.load(from: url)
+        XCTAssertNotNil(unreadable.problem)
+        XCTAssertTrue(unreadable.safeToWrite)
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.appendingPathExtension("bad").path, isDirectory: &isDir) && isDir.boolValue)
     }
 
     func testArrangementFollowsTheLayout() {
@@ -161,7 +171,16 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(o[11].map { [$0.x, $0.y] }, [1512, 0])
         XCTAssertEqual(o[14].map { [$0.x, $0.y] }, [1512 + 2560, 0])
         XCTAssertEqual(o[10].map { [$0.x, $0.y] }, [1512 + 2560 + 1920, 0])
-        XCTAssertEqual(o[12].map { [$0.x, $0.y] }, [1512, -1080], "above the row")
-        XCTAssertEqual(o[13].map { [$0.x, $0.y] }, [1512, 1440], "below the tallest row display")
+        XCTAssertEqual(o[12].map { [$0.x, $0.y] }, [1512 + 2560, -1080], "on top of the row display at its yaw")
+        XCTAssertEqual(o[13].map { [$0.x, $0.y] }, [1512 + 2560, 1440], "under it, below the tallest row display")
+
+        // Two screens above, both nearest the same row display: the second is pushed right, not overlapping.
+        let two = DisplayArrangement.origins([
+            Item(id: 1, yaw: 0, pitch: 0, width: 1920, height: 1080),
+            Item(id: 2, yaw: -5, pitch: 25, width: 1920, height: 1080),
+            Item(id: 3, yaw: 5, pitch: 25, width: 1280, height: 720),
+        ], rightOf: (x: 0, y: 0, width: 1000, height: 800))
+        XCTAssertEqual(two[2].map { [$0.x, $0.y] }, [1000, -1080])
+        XCTAssertEqual(two[3].map { [$0.x, $0.y] }, [1000 + 1920, -720])
     }
 }

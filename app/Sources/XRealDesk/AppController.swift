@@ -39,6 +39,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var link: GlassesLink?
     private let modes = DisplayModeController()
     private var library = LayoutLibrary()
+    /// False when layouts.json exists but could be neither used nor moved aside (see LayoutLibrary.load).
+    private var libraryWritable = true
     private var slots: [Int: ScreenSlot] = [:]
     private var device: MTLDevice?
     private var renderer: Renderer?
@@ -105,9 +107,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: layouts
 
     private func loadLibrary() {
-        let (loaded, problem) = LayoutLibrary.load()
-        library = loaded
-        if let problem { Log.line("layouts: \(problem)") }
+        let loaded = LayoutLibrary.load()
+        library = loaded.library
+        libraryWritable = loaded.safeToWrite
+        if let problem = loaded.problem { Log.line("layouts: \(problem)") }
         if let name = options.layout {
             if let l = (library.saved + Layout.presets).first(where: { $0.name == name }) {
                 library.current = l
@@ -130,7 +133,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             slots[s.id] = slot
             startCapture(slot)
         }
-        do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
+        saveLibrary()
         // New displays appear asynchronously; the screen-parameters notification arranges them too.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.arrangeDisplays() }
         updateStatus()
@@ -141,6 +144,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         change(&l)
         library.current = l
         applyLayout()
+    }
+
+    @discardableResult
+    private func saveLibrary() -> Bool {
+        guard libraryWritable else {
+            Log.line("layouts: not saved (the existing layouts.json could not be read or moved aside)")
+            return false
+        }
+        do {
+            try library.write()
+            return true
+        } catch {
+            Log.line("layouts: not saved: \(error)")
+            return false
+        }
     }
 
     private func createSlot(_ s: SpatialScreen) -> ScreenSlot? {
@@ -182,8 +200,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Puts our displays in macOS's arrangement the way they sit around the head (see `DisplayArrangement`), for this
-    /// login session only. Does nothing until every display has appeared. Asks again only when the wanted arrangement
-    /// changes (layout, displays, sizes): if macOS adjusts it, or the user rearranges in System Settings, that stays.
+    /// login session only. Does nothing until every display has appeared. Once an arrangement is applied (or already
+    /// in place) it is not asked again until the wanted arrangement changes (layout, displays, sizes): if macOS adjusts
+    /// it, or the user rearranges in System Settings, that stays. A failed attempt is retried on the next change.
     private func arrangeDisplays() {
         let ours = Set(slots.values.map(\.displayID))
         guard !ours.isEmpty else { return }
@@ -202,17 +221,32 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let origins = DisplayArrangement.origins(items, rightOf: (Int(box.minX), Int(box.minY), Int(box.width), Int(box.height)))
         let request = origins.mapValues { [$0.x, $0.y] }
         guard request != requestedArrangement else { return }
-        requestedArrangement = request
         let moves = origins.filter { id, o in
             let b = CGDisplayBounds(id)
             return Int(b.minX) != o.x || Int(b.minY) != o.y
         }
-        guard !moves.isEmpty else { return }
+        guard !moves.isEmpty else {
+            requestedArrangement = request
+            return
+        }
+        let described = moves.map { "\($0.key) → (\($0.value.x), \($0.value.y))" }.sorted().joined(separator: ", ")
         var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return }
-        for (id, o) in moves { CGConfigureDisplayOrigin(config, id, Int32(o.x), Int32(o.y)) }
+        let begin = CGBeginDisplayConfiguration(&config)
+        guard begin == .success, let config else {
+            Log.line("arrangement: \(described): FAILED to begin (\(begin.rawValue))")
+            return
+        }
+        for (id, o) in moves {
+            let r = CGConfigureDisplayOrigin(config, id, Int32(o.x), Int32(o.y))
+            guard r == .success else {
+                CGCancelDisplayConfiguration(config)
+                Log.line("arrangement: \(described): FAILED for display \(id) (\(r.rawValue))")
+                return
+            }
+        }
         let result = CGCompleteDisplayConfiguration(config, .forSession)
-        Log.line("arrangement: \(moves.map { "\($0.key) → (\($0.value.x), \($0.value.y))" }.sorted().joined(separator: ", ")): \(result == .success ? "done" : "FAILED (\(result.rawValue))")")
+        if result == .success { requestedArrangement = request }
+        Log.line("arrangement: \(described): \(result == .success ? "done" : "FAILED (\(result.rawValue))")")
     }
 
     // MARK: probe
@@ -578,7 +612,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ActionItem(l.name) { [weak self] in
                     guard let self else { return }
                     library.saved.removeAll { $0.name == l.name }
-                    do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
+                    saveLibrary()
                 }
             }))
         }
@@ -606,8 +640,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         l.name = chosen
         library.save(l)
         library.current = l
-        do { try library.write() } catch { Log.line("layouts: not saved: \(error)") }
-        Log.line("layouts: saved \"\(chosen)\"")
+        if saveLibrary() { Log.line("layouts: saved \"\(chosen)\"") }
     }
 
     private func recenter() {
