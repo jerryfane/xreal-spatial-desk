@@ -9,9 +9,27 @@ import XRealCore
 enum OwnDisplays {
     private static let lock = NSLock()
     private static var ids: Set<CGDirectDisplayID> = []
+    /// Invalidated by us but possibly still listed by WindowServer.
+    private static var retired: Set<CGDirectDisplayID> = []
 
     static func add(_ id: CGDirectDisplayID) { lock.withLock { _ = ids.insert(id) } }
-    static func remove(_ id: CGDirectDisplayID) { lock.withLock { _ = ids.remove(id) } }
+
+    /// The display was invalidated: it stays excluded until `pruneRetired` sees it gone from the display list.
+    static func retire(_ id: CGDirectDisplayID) { lock.withLock { _ = retired.insert(id) } }
+
+    /// Forgets retired displays no longer online (call on every display change).
+    static func pruneRetired() {
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+        var online = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetOnlineDisplayList(count, &online, &count)
+        let present = Set(online.prefix(Int(count)))
+        lock.withLock {
+            let gone = retired.subtracting(present)
+            ids.subtract(gone)
+            retired.subtract(gone)
+        }
+    }
 
     static func contains(_ id: CGDirectDisplayID) -> Bool {
         lock.withLock { ids.contains(id) } || CGDisplayVendorNumber(id) == XRVirtualDisplay.vendorID
