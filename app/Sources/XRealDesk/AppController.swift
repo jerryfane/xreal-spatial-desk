@@ -52,6 +52,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var permissionRequested = false
     /// Why the last side-by-side attempt did not switch, shown under the menu item; nil once it switched or was off.
     private var sbsProblem: String?
+
+    /// Drops the note once it no longer holds: a queued request is now on the wire (side-by-side on, link up).
+    private func reconcileSbsProblem() {
+        if sbsProblem != nil, sideBySideOn, modes.isControlConnected { sbsProblem = nil }
+    }
     /// The last arrangement asked of macOS, as display ID → [x, y]; asked again only when it changes.
     private var requestedArrangement: [UInt32: [Int]] = [:]
     /// Serial number for the next virtual display: a re-created screen (new resolution) gets a new one, so it is
@@ -552,6 +557,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             setSideBySide(!sideBySideOn)
         })
+        reconcileSbsProblem()
         if let sbsProblem {
             let text = sbsProblem.count > 140 ? sbsProblem.prefix(140) + "…" : Substring(sbsProblem)
             let line = NSMenuItem(title: "    Not switched: \(text)", action: nil, keyEquivalent: "")
@@ -690,6 +696,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Reconcile where the image goes once a second. Mode replies arrive on the glasses thread and can change the
         // target with no screen notification after them (e.g. a restore accepted after the display already changed).
         OwnDisplays.pruneRetired()
+        reconcileSbsProblem()
         placeRenderWindow(.periodicCheck)
         updateStatus()
     }
