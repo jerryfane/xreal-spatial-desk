@@ -50,6 +50,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var statusLines: [NSMenuItem] = []
     private var permissionRequested = false
+    /// Why the last side-by-side attempt did not switch, shown under the menu item; nil once it switched or was off.
+    private var sbsProblem: String?
     /// The last arrangement asked of macOS, as display ID → [x, y]; asked again only when it changes.
     private var requestedArrangement: [UInt32: [Int]] = [:]
     /// Serial number for the next virtual display: a re-created screen (new resolution) gets a new one, so it is
@@ -315,20 +317,30 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setSideBySide(_ on: Bool) {
         if on {
-            guard let glasses = GlassesDisplay.find() else {
-                Log.line("display mode: glasses display not found (\(describeDisplays())); side-by-side not switched on")
+            let search = GlassesDisplay.search()
+            guard let glasses = search.glasses else {
+                sbsProblem = search.why
+                Log.line("display mode: \(search.why); side-by-side not switched on")
                 updateStatus()
                 return
             }
             // Cover the glasses with our image before they switch, so neither eye ever sees half a desktop. If they
             // cannot be covered (no renderer, screen not found), do not switch.
             guard placeRenderWindow(.sideBySideOn, forceGlasses: glasses) == glasses.id else {
-                Log.line("display mode: could not cover the glasses with the image; side-by-side not switched on")
+                sbsProblem = "could not put the image on the glasses (\(glasses.description))"
+                Log.line("display mode: \(sbsProblem!); side-by-side not switched on")
                 updateStatus()
                 return
             }
-            _ = modes.switchTo(.sideBySide, glasses: glasses)
+            if !modes.switchTo(.sideBySide, glasses: glasses) {
+                sbsProblem = "the request was not sent (see log)"
+            } else if !modes.isControlConnected {
+                sbsProblem = "no control connection to the glasses yet; it is sent when they connect"
+            } else {
+                sbsProblem = nil
+            }
         } else if modes.keeper.restore() != nil {
+            sbsProblem = nil
             // The window stays on the glasses until they report regular mode again (placeRenderWindow on the change).
             modes.send(why: "menu")
         }
@@ -540,6 +552,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             setSideBySide(!sideBySideOn)
         })
+        if let sbsProblem {
+            let text = sbsProblem.count > 140 ? sbsProblem.prefix(140) + "…" : Substring(sbsProblem)
+            let line = NSMenuItem(title: "    Not switched: \(text)", action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            line.toolTip = sbsProblem
+            menu.addItem(line)
+        }
         menu.addItem(.separator())
         menu.addItem(submenu("Screens", screensMenu()))
         menu.addItem(submenu("Layouts", layoutsMenu()))

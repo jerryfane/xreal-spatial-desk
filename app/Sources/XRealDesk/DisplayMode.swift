@@ -49,18 +49,34 @@ struct GlassesDisplay: Equatable {
 
     /// The single display that looks like the glasses, or nil (none, or several, which would be a guess). Our own
     /// virtual displays are skipped (`OwnDisplays`).
-    static func find() -> GlassesDisplay? {
+    static func find() -> GlassesDisplay? { search().glasses }
+
+    /// `find`, plus a short reason when it finds nothing, naming every display and why it was or was not taken.
+    static func search() -> (glasses: GlassesDisplay?, why: String) {
         var count: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetOnlineDisplayList(count, &ids, &count)
-        let candidates: [GlassesDisplay] = ids.compactMap { id in
-            guard !OwnDisplays.contains(id), CGDisplayIsBuiltin(id) == 0, CGDisplayIsActive(id) != 0,
-                  let m = CGDisplayCopyDisplayMode(id), m.pixelHeight == 1080,
-                  m.pixelWidth == 1920 || m.pixelWidth == 3840 else { return nil }
-            return GlassesDisplay(id: id, pixelWidth: m.pixelWidth, pixelHeight: m.pixelHeight)
+        var candidates: [GlassesDisplay] = []
+        var notes: [String] = []
+        for id in ids.prefix(Int(count)) {
+            let m = CGDisplayCopyDisplayMode(id)
+            let size = m.map { "\($0.pixelWidth)x\($0.pixelHeight)" } ?? "no mode"
+            let skip: String?
+            if OwnDisplays.contains(id) { skip = "ours" }
+            else if CGDisplayIsBuiltin(id) != 0 { skip = "built-in" }
+            else if CGDisplayIsActive(id) == 0 { skip = "inactive" }
+            else if let m, m.pixelHeight == 1080, m.pixelWidth == 1920 || m.pixelWidth == 3840 { skip = nil }
+            else { skip = "not 1920/3840x1080" }
+            notes.append("\(id) \(size) vendor \(String(format: "0x%04x", CGDisplayVendorNumber(id))): \(skip ?? "candidate")")
+            if skip == nil, let m { candidates.append(GlassesDisplay(id: id, pixelWidth: m.pixelWidth, pixelHeight: m.pixelHeight)) }
         }
-        return candidates.count == 1 ? candidates[0] : nil
+        let list = notes.joined(separator: "; ")
+        switch candidates.count {
+        case 1: return (candidates[0], "")
+        case 0: return (nil, "no glasses display (\(list))")
+        default: return (nil, "\(candidates.count) displays look like the glasses (\(list))")
+        }
     }
 }
 
