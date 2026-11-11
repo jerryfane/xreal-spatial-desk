@@ -91,6 +91,9 @@ public final class Renderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
+    private let depthState: MTLDepthStencilState
+    /// Depth buffer for the current target size; screens can cut through each other, so visibility is per fragment.
+    private var depth: MTLTexture?
     private let sceneSource: () -> (scene: Scene?, keepAlive: Any?)
     private var target: MTLTexture?
     private var pendingSnapshot: (url: URL, done: (Bool) -> Void)?
@@ -108,7 +111,15 @@ public final class Renderer: NSObject, MTKViewDelegate {
         desc.vertexFunction = library.makeFunction(name: "quad_vertex")
         desc.fragmentFunction = library.makeFunction(name: "quad_fragment")
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        desc.depthAttachmentPixelFormat = .depth32Float
         pipeline = try device.makeRenderPipelineState(descriptor: desc)
+        let depthDesc = MTLDepthStencilDescriptor()
+        depthDesc.depthCompareFunction = .less
+        depthDesc.isDepthWriteEnabled = true
+        guard let depthState = device.makeDepthStencilState(descriptor: depthDesc) else {
+            throw MetalError(description: "no depth state")
+        }
+        self.depthState = depthState
         super.init()
     }
 
@@ -134,14 +145,25 @@ public final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         pass.colorAttachments[0].storeAction = .store
+        if depth?.width != target.width || depth?.height != target.height {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: target.width,
+                                                             height: target.height, mipmapped: false)
+            d.usage = .renderTarget
+            d.storageMode = .private
+            depth = device.makeTexture(descriptor: d)
+        }
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
         guard let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
         defer { enc.endEncoding() }
         guard let scene else { return }
         enc.setRenderPipelineState(pipeline)
+        enc.setDepthStencilState(depthState)
         let d = scene.displays
         let eyeW = Double(target.width) / 2
-        // Farthest first, so a nearer screen covers a farther one where they overlap.
-        let screens = scene.screens.sorted { $0.placement.distance > $1.placement.distance }
+        let screens = scene.screens
         for (i, eye) in [d.left, d.right].enumerated() {
             enc.setViewport(MTLViewport(originX: Double(i) * eyeW, originY: 0, width: eyeW, height: Double(target.height), znear: 0, zfar: 1))
             let viewProjection = eye.projection(width: d.width, height: d.height) * eye.view(head: scene.head)

@@ -240,7 +240,8 @@ public struct LayoutLibrary: Codable, Equatable, Sendable {
 /// Where macOS should put our virtual displays in its arrangement, so the pointer moves between them the way they
 /// sit around the head: the row left to right in yaw order, right of the other displays and top-aligned with them;
 /// a screen above (below) the row sits on top of (under) the row display nearest its yaw, centred on it, pushed
-/// right only as far as needed to clear the one before it in its band and the other displays.
+/// right only as far as needed to clear the one before it in its band and the other displays. A screen below sits
+/// directly under the tallest row display it spans, so it always shares an edge with the row.
 public enum DisplayArrangement {
     public struct Item: Equatable, Sendable {
         public var id: UInt32
@@ -274,19 +275,27 @@ public enum DisplayArrangement {
             out[i.id] = (x, top)
             x += i.width
         }
-        func band(_ items: [Item], y: (Item) -> Int) {
+        /// Bottom edge of the row under columns [x, x + width): the tallest row display there, else the whole row.
+        func rowBottom(x: Int, width: Int) -> Int {
+            let spanned = row.filter { r in
+                let rx = out[r.id]!.x
+                return rx < x + width && x < rx + r.width
+            }
+            return top + (spanned.map(\.height).max() ?? rowHeight)
+        }
+        func band(_ items: [Item], y: (Item, Int) -> Int) {
             var end = left  // never over the other displays
             for i in items {
                 // Centred on the nearest row display, else from the left edge.
                 let under = row.min { abs($0.yaw - i.yaw) < abs($1.yaw - i.yaw) }
                 let centred = under.map { out[$0.id]!.x + ($0.width - i.width) / 2 } ?? left
                 let ix = max(centred, end)
-                out[i.id] = (ix, y(i))
+                out[i.id] = (ix, y(i, ix))
                 end = ix + i.width
             }
         }
-        band(above) { top - $0.height }
-        band(below) { _ in top + rowHeight }
+        band(above) { i, _ in top - i.height }
+        band(below) { i, x in rowBottom(x: x, width: i.width) }
         return out
     }
 }
