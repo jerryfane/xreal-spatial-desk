@@ -126,6 +126,40 @@ public struct ScreenPlacement: Equatable, Sendable {
         [(-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)].map { point(x: $0, y: $1) }
     }
 
+    /// Where a ray from the head (at the origin) along `direction` meets the screen: distance along the ray and
+    /// surface coordinates u, v ∈ [0, 1] (u right, v down; the captured display's pixel = u·width, v·height), or nil
+    /// if it misses. Same surface as `localPoint`.
+    public func hit(direction: Vec3) -> (t: Double, u: Double, v: Double)? {
+        let inv = orientation.conjugate
+        let o = inv.rotate(-center), d = inv.rotate(direction)
+        func coords(_ t: Double) -> (t: Double, u: Double, v: Double)? {
+            guard t > 0 else { return nil }
+            let p = o + d * t
+            let u: Double
+            if curveRadius > 0 {
+                guard arc > 0 else { return nil }
+                u = atan2(p.x, p.z + curveRadius) / arc + 0.5
+            } else {
+                u = p.x / width + 0.5
+            }
+            let v = p.y / height + 0.5
+            return (0...1).contains(u) && (0...1).contains(v) ? (t, u, v) : nil
+        }
+        guard curveRadius > 0 else {
+            guard abs(d.z) > 1e-12 else { return nil }
+            return coords(-o.z / d.z)
+        }
+        // Cylinder x² + (z + r)² = r² around the local y axis through (0, ·, −r). The screen is the arc |angle| ≤ arc/2
+        // facing away from the head; `coords` rejects every other point of the circle by its angle. Nearer root first.
+        let r = curveRadius, oz = o.z + r
+        let a = d.x * d.x + d.z * d.z
+        guard a > 1e-12 else { return nil }
+        let b = 2 * (o.x * d.x + oz * d.z), c = o.x * o.x + oz * oz - r * r
+        let disc = b * b - 4 * a * c
+        guard disc >= 0 else { return nil }
+        return coords((-b - disc.squareRoot()) / (2 * a)) ?? coords((-b + disc.squareRoot()) / (2 * a))
+    }
+
     /// Horizontal and vertical angle the screen covers, seen from the head, degrees.
     public var angularSize: (width: Double, height: Double) {
         let edge = localPoint(x: 0.5, y: 0)

@@ -66,6 +66,10 @@ the glasses' display). Black is see-through on the glasses.
   resolution and position (in the row, above, below); **Add screen** (up to six), **Remove**. Screens in the row sit
   side by side, 8° apart; the one straight ahead stays put and the others move aside when it grows or curves (a
   curved screen keeps its width along the curve, so it wraps more of your view).
+- **Pointer follows your gaze** (on by default, menu toggle, remembered): when you look at another screen for 0.15 s,
+  the pointer jumps onto it at the spot you look at, so it is always on a screen you can see and click. It is left
+  alone while a mouse button is held (drag windows between screens) and while it is on a monitor other than the
+  glasses. Needs no permission.
 - **Layouts:** presets *One screen*, *Three in a row*, *Desk (four screens)*; **Save current layout as…** and the saved
   layouts. The current and saved layouts are kept in `~/Library/Application Support/XRealDesk/layouts.json`; an
   unreadable file is renamed `layouts.json.bad` and the app starts with one screen. `--layout NAME` starts with a

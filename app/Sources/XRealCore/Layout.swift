@@ -299,3 +299,60 @@ public enum DisplayArrangement {
         return out
     }
 }
+
+/// Which screen the head points at, and where on it.
+public struct GazeHit: Equatable, Sendable {
+    public var screen: Int
+    /// Surface coordinates in [0, 1], u right, v down (the screen's display: pixel = u·width, v·height).
+    public var u: Double
+    public var v: Double
+
+    public init(screen: Int, u: Double, v: Double) {
+        self.screen = screen
+        self.u = u
+        self.v = v
+    }
+}
+
+extension Layout {
+    /// The nearest screen along the head's forward direction (`head`: head → world, as HeadTracker), or nil.
+    public func gaze(head: Quat) -> GazeHit? {
+        let forward = head.rotate(Vec3(0, 0, 1))
+        let hits = screens.compactMap { s in s.placement.hit(direction: forward).map { (s.id, $0) } }
+        guard let best = hits.min(by: { $0.1.t < $1.1.t }) else { return nil }
+        return GazeHit(screen: best.0, u: best.1.u, v: best.1.v)
+    }
+}
+
+/// Decides when the pointer should jump to the screen the user looks at: only when it is on a screen they are not
+/// looking at (or somewhere it cannot be used, such as under the 3D image), and only once the gaze has rested on the
+/// new screen for `dwell` seconds, so glancing across a screen does not move it.
+public struct GazeFocus: Sendable {
+    public var dwell: Double
+    private var candidate: Int?
+    private var since = 0.0
+
+    public init(dwell: Double = 0.15) {
+        self.dwell = dwell
+    }
+
+    /// - Parameters:
+    ///   - looking: the screen the gaze is on, if any.
+    ///   - pointer: the screen the pointer is on, if it is on one of ours.
+    ///   - pointerMovable: the pointer is on one of ours or on the display under the 3D image; elsewhere (a monitor
+    ///     the user is working on) it is left alone.
+    /// - Returns: the screen to move the pointer to now, or nil.
+    public mutating func update(looking: Int?, pointer: Int?, pointerMovable: Bool, now: Double) -> Int? {
+        guard let looking, pointerMovable, looking != pointer else {
+            candidate = nil
+            return nil
+        }
+        if candidate != looking {
+            candidate = looking
+            since = now
+        }
+        guard now - since >= dwell else { return nil }
+        candidate = nil
+        return looking
+    }
+}

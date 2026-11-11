@@ -50,6 +50,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var statusLines: [NSMenuItem] = []
     private var permissionRequested = false
+    private var gazeFocus = GazeFocus()
+    /// "Pointer follows your gaze" (menu); remembered across runs, on by default.
+    private var pointerFollowsGaze = UserDefaults.standard.object(forKey: "pointerFollowsGaze") as? Bool ?? true
+
     /// Why the last side-by-side attempt did not switch, shown under the menu item; nil once it switched or was off.
     private var sbsProblem: String?
 
@@ -106,6 +110,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         makeStatusItem()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated { self.tick() }
+        }
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
+            MainActor.assumeIsolated { self.followGaze() }
         }
         for t in options.snapshots {
             DispatchQueue.main.asyncAfter(deadline: .now() + t) { self.snapshot(at: t) }
@@ -553,6 +560,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(ActionItem("Recenter", key: "r") { [weak self] in self?.recenter() })
+        menu.addItem(ActionItem("Pointer follows your gaze", checked: pointerFollowsGaze) { [weak self] in
+            guard let self else { return }
+            pointerFollowsGaze.toggle()
+            UserDefaults.standard.set(pointerFollowsGaze, forKey: "pointerFollowsGaze")
+            Log.line("pointer follows gaze: \(pointerFollowsGaze ? "on" : "off")")
+        })
         var sbsTitle = "Side-by-side 3D on the glasses"
         if let last = modes.keeper.last, last.result != .accepted { sbsTitle += " (glasses replied: \(last.result))" }
         menu.addItem(ActionItem(sbsTitle, key: "s", checked: sideBySideOn) { [weak self] in
@@ -678,6 +691,31 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         library.save(l)
         library.current = l
         if saveLibrary() { Log.line("layouts: saved \"\(chosen)\"") }
+    }
+
+    /// Moves the pointer onto the screen the user looks at (see `GazeFocus`), at the point they look at, so the
+    /// pointer is always on a screen they can see and use. Leaves it alone while a mouse button is held (dragging a
+    /// window between screens) and when it is on a display other than ours or the one under the 3D image.
+    private func followGaze() {
+        guard pointerFollowsGaze, !slots.isEmpty, head.calibration != nil,
+              let location = CGEvent(source: nil)?.location else { return }
+        var under: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(location, 1, &under, &count) == .success, count == 1 else { return }
+        let pointer = slots.values.first { $0.displayID == under }?.id
+        let covered = renderWindow.flatMap { $0.level == .screenSaver ? $0.screen?.displayID : nil }
+        let movable = NSEvent.pressedMouseButtons == 0 && (pointer != nil || under == covered)
+        let gaze = layout.gaze(head: head.orientation)
+        guard let target = gazeFocus.update(looking: gaze?.screen, pointer: pointer, pointerMovable: movable,
+                                            now: ProcessInfo.processInfo.systemUptime),
+              let gaze, let slot = slots[target] else { return }
+        let b = CGDisplayBounds(slot.displayID)
+        let point = CGPoint(x: b.minX + min(max(gaze.u, 0.01), 0.99) * b.width,
+                            y: b.minY + min(max(gaze.v, 0.01), 0.99) * b.height)
+        CGWarpMouseCursorPosition(point)
+        // Warping briefly decouples the mouse from the pointer; re-couple so the next movement is not swallowed.
+        CGAssociateMouseAndMouseCursorPosition(1)
+        Log.line(String(format: "pointer → screen %d at (%.0f, %.0f)", target, point.x, point.y))
     }
 
     private func recenter() {

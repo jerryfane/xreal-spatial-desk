@@ -202,4 +202,95 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(mixed[3].map { [$0.x, $0.y] }, [1000, 1080], "directly under display 1")
         XCTAssertEqual(mixed[4].map { [$0.x, $0.y] }, [1000 + 1920, 1920], "under the portrait display it spans")
     }
+
+    func look(yaw: Double, pitch: Double = 0) -> Quat { HeadPose(yaw: yaw, pitch: pitch, roll: 0).quaternion }
+
+    func testGazeFindsTheScreenAndThePointLookedAt() throws {
+        let l = Layout.threeInARow
+        let centre = try XCTUnwrap(l.gaze(head: .identity))
+        XCTAssertEqual(centre.screen, 1)
+        XCTAssertEqual(centre.u, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(centre.v, 0.5, accuracy: 1e-9)
+        // Looking at a neighbour's centre lands on it, in the middle.
+        for id in [2, 3] {
+            let s = try XCTUnwrap(l.screen(id))
+            let hit = try XCTUnwrap(l.gaze(head: look(yaw: s.yaw)))
+            XCTAssertEqual(hit.screen, id)
+            XCTAssertEqual(hit.u, 0.5, accuracy: 1e-9)
+        }
+        // Up and to the right on the centre screen: u > 0.5, v < 0.5 (v grows downward), at the projected point.
+        let p = l.screen(1)!.placement
+        let target = p.point(x: 0.3, y: -0.2)
+        let dir = target.normalized
+        let hit = try XCTUnwrap(p.hit(direction: dir))
+        XCTAssertEqual(hit.u, 0.8, accuracy: 1e-9)
+        XCTAssertEqual(hit.v, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(hit.t, target.length, accuracy: 1e-9)
+        // The gap between screens, straight up, and behind: nothing.
+        let gapYaw = (l.screen(1)!.placement.angularSize.width + Layout.rowGap) / 2
+        XCTAssertNil(l.gaze(head: look(yaw: gapYaw)))
+        XCTAssertNil(l.gaze(head: look(yaw: 0, pitch: 60)))
+        XCTAssertNil(l.gaze(head: look(yaw: 180)))
+    }
+
+    func testGazeOnACurvedScreenFollowsTheCurve() throws {
+        var s = ScreenPlacement(distance: 1.5, width: 1.2, height: 0.5)
+        s.curveRadius = 1.0
+        for (x, y) in [(0.0, 0.0), (0.45, 0.1), (-0.3, -0.4), (0.49, 0.49)] {
+            let target = s.point(x: x, y: y)
+            let hit = try XCTUnwrap(s.hit(direction: target.normalized), "\(x), \(y)")
+            XCTAssertEqual(hit.u, x + 0.5, accuracy: 1e-9)
+            XCTAssertEqual(hit.v, y + 0.5, accuracy: 1e-9)
+            XCTAssertEqual(hit.t, target.length, accuracy: 1e-9)
+        }
+        // Just past the curved edge: a miss, not a hit on the rest of the circle.
+        let beyond = s.point(x: 0.5, y: 0) + Vec3(0.05, 0, 0)
+        XCTAssertNil(s.hit(direction: beyond.normalized))
+
+        // A tight curve far away: the head is outside the circle, so every ray first crosses its back (toward the
+        // head), which is not the screen; the hit must be on the screen behind it.
+        var far = ScreenPlacement(distance: 2.5, width: 1.2, height: 0.5)
+        far.curveRadius = 0.8
+        for x in [0.0, 0.3, -0.45] {
+            let target = far.point(x: x, y: 0.1)
+            let hit = try XCTUnwrap(far.hit(direction: target.normalized))
+            XCTAssertEqual(hit.u, x + 0.5, accuracy: 1e-9)
+            XCTAssertEqual(hit.t, target.length, accuracy: 1e-9)
+        }
+    }
+
+    func testGazePicksTheNearerOfOverlappingScreens() throws {
+        let l = Layout(name: "x", screens: [
+            SpatialScreen(id: 1, distance: 2.5, diagonalInches: 80),
+            SpatialScreen(id: 2, distance: 1.2, diagonalInches: 20),
+        ])
+        XCTAssertEqual(l.gaze(head: .identity)?.screen, 2)
+        XCTAssertEqual(l.gaze(head: look(yaw: 12))?.screen, 1, "beside the small near screen, the big far one")
+    }
+
+    func testPointerMovesOnlyAfterTheGazeRestsOnAnotherScreen() {
+        var f = GazeFocus(dwell: 0.15)
+        // Already on the screen looked at: nothing.
+        XCTAssertNil(f.update(looking: 1, pointer: 1, pointerMovable: true, now: 0))
+        // Looking at 2: not yet, then after the dwell, once.
+        XCTAssertNil(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 1.0))
+        XCTAssertNil(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 1.1))
+        XCTAssertEqual(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 1.16), 2)
+        XCTAssertNil(f.update(looking: 2, pointer: 2, pointerMovable: true, now: 1.2))
+        // A glance across screen 3 shorter than the dwell, then back: never moves.
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: true, now: 2.0))
+        XCTAssertNil(f.update(looking: 2, pointer: 2, pointerMovable: true, now: 2.1))
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: true, now: 2.2))
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: true, now: 2.3), "the dwell restarted")
+        // Gaze in a gap, or the pointer somewhere it must be left alone (button held, another monitor): nothing,
+        // and the dwell starts over afterwards.
+        XCTAssertNil(f.update(looking: nil, pointer: 2, pointerMovable: true, now: 3.0))
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: false, now: 3.1))
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: false, now: 3.5))
+        XCTAssertNil(f.update(looking: 3, pointer: 2, pointerMovable: true, now: 3.6))
+        XCTAssertEqual(f.update(looking: 3, pointer: 2, pointerMovable: true, now: 3.8), 3)
+        // Under the 3D image (pointer on none of our screens, but movable): moves to the screen looked at.
+        XCTAssertNil(f.update(looking: 1, pointer: nil, pointerMovable: true, now: 4.0))
+        XCTAssertEqual(f.update(looking: 1, pointer: nil, pointerMovable: true, now: 4.2), 1)
+    }
 }
