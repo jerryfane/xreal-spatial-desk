@@ -707,7 +707,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let movable = NSEvent.pressedMouseButtons == 0 && (pointer != nil || under == covered)
         let gaze = layout.gaze(head: head.orientation)
         guard let target = gazeFocus.update(looking: gaze?.screen, pointer: pointer, pointerMovable: movable,
-                                            now: Log.elapsed),
+                                            now: ProcessInfo.processInfo.systemUptime),
               let gaze, let slot = slots[target] else { return }
         let b = CGDisplayBounds(slot.displayID)
         let point = CGPoint(x: b.minX + min(max(gaze.u, 0.01), 0.99) * b.width,
