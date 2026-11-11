@@ -91,35 +91,40 @@ struct GlassesDisplay: Equatable {
 
 /// Undoes macOS mirroring between one of our virtual displays and another display (the glasses mirroring one of our
 /// screens shows that screen instead of our image, and leaves no glasses display to switch to side-by-side). Each
-/// pair is undone at most once per run, so a mirror the user sets up again on purpose is left alone. Session only.
+/// pair is undone at most once per run, so a mirror the user sets up again on purpose is left alone; a failed attempt
+/// does not count and is retried at most every 10 s. Session only.
 enum MirrorGuard {
     private static var undone: Set<[CGDirectDisplayID]> = []
+    private static var retryAfter: [[CGDirectDisplayID]: Date] = [:]
 
     static func check() {
         var count: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return }
+        let now = Date()
         let pairs = ids.prefix(Int(count)).compactMap { id -> [CGDirectDisplayID]? in
             let source = CGDisplayMirrorsDisplay(id)
             guard source != kCGNullDirectDisplay, OwnDisplays.contains(id) != OwnDisplays.contains(source) else { return nil }
             return [id, source]
-        }.filter { !undone.contains($0) }
+        }.filter { !undone.contains($0) && (retryAfter[$0].map { now >= $0 } ?? true) }
         guard !pairs.isEmpty else { return }
-        undone.formUnion(pairs)
         let described = pairs.map { "\($0[0]) mirrored \($0[1])" }.joined(separator: ", ")
-        var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success, let config else {
-            Log.line("mirroring: \(described): could not begin configuration")
-            return
+        func failed(_ why: String) {
+            for p in pairs { retryAfter[p] = now.addingTimeInterval(10) }
+            Log.line("mirroring: \(described): \(why); retrying in 10 s")
         }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return failed("could not begin configuration") }
         for pair in pairs where CGConfigureDisplayMirrorOfDisplay(config, pair[0], kCGNullDirectDisplay) != .success {
             CGCancelDisplayConfiguration(config)
-            Log.line("mirroring: \(described): could not unmirror \(pair[0])")
-            return
+            return failed("could not unmirror \(pair[0])")
         }
         let result = CGCompleteDisplayConfiguration(config, .forSession)
-        Log.line("mirroring: \(described): \(result == .success ? "undone" : "FAILED (\(result.rawValue))")")
+        guard result == .success else { return failed("FAILED (\(result.rawValue))") }
+        undone.formUnion(pairs)
+        for p in pairs { retryAfter[p] = nil }
+        Log.line("mirroring: \(described): undone")
     }
 }
 
