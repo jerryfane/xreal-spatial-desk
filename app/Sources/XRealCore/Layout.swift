@@ -122,9 +122,12 @@ public struct Layout: Codable, Equatable, Sendable {
     private mutating func insert(yaw: Double, pitch: Double) -> SpatialScreen? {
         var new = template
         new.id = (screens.map(\.id).max() ?? 0) + 1
+        // Not clamped: `yaw` only orders the screen in the row until `packRow` places it, and wrapping it (past ±180°,
+        // next to a screen behind the head) would put it at the wrong end of the row. The copied fields are already
+        // clamped and the pitch is 0 or ±bandPitch.
         new.yaw = yaw
         new.pitch = pitch
-        screens.append(new.clamped)
+        screens.append(new)
         packRow()
         return screen(new.id)
     }

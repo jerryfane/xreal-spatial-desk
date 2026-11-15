@@ -387,4 +387,13 @@ final class LayoutTests: XCTestCase {
         XCTAssertFalse(d.down(key: 2, now: 1.3), "another button")
         XCTAssertTrue(d.down(key: 2, now: 1.6))
     }
+
+    // Issue #26: next to a screen behind the head, the new one must still go on its right, not wrap to the far left.
+    func testAddingNextToAScreenBehindYouKeepsItsPlace() throws {
+        var l = Layout(name: "x", screens: [SpatialScreen(id: 1, yaw: 179.75)])
+        let added = try XCTUnwrap(l.addScreen())
+        XCTAssertEqual(l.screen(1)?.yaw, 179.75, "the existing screen stays put")
+        XCTAssertGreaterThan(added.yaw, 179.75, "the new one is on its right")
+        assertPacked(l)
+    }
 }
