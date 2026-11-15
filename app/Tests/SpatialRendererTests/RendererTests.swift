@@ -205,5 +205,23 @@ final class RendererTests: XCTestCase {
             XCTAssertEqual(image.bgra(high.x, high.y), blue, "upper screen in front at 17°, drawn \(order.map(\.0.pitch))")
         }
     }
+
+    func testAScreenBeingMovedIsOutlined() throws {
+        let blue: [UInt8] = [255, 0, 0, 255], yellow: [UInt8] = [10, 214, 255, 255]
+        let p = ScreenPlacement(distance: 1.6, width: 0.9, height: 0.5)
+        for highlighted in [false, true] {
+            let image = try render(head: .identity, screens: [Renderer.Screen(placement: p, texture: solid(blue),
+                                                                              highlighted: highlighted)])
+            func at(_ x: Double, _ y: Double) throws -> [UInt8] {
+                let px = try XCTUnwrap(displays.left.pixel(of: p.point(x: x, y: y), head: .identity,
+                                                           width: displays.width, height: displays.height))
+                return image.bgra(Int(px.u / 2), Int(px.v / 2))
+            }
+            // 1 cm inside the left edge: in the 2 cm outline only when highlighted. The middle is always the screen.
+            XCTAssertEqual(try at(-0.5 + 0.01 / 0.9, 0), highlighted ? yellow : blue)
+            XCTAssertEqual(try at(0, -0.5 + 0.01 / 0.5), highlighted ? yellow : blue)
+            XCTAssertEqual(try at(0, 0), blue)
+        }
+    }
 }
 #endif

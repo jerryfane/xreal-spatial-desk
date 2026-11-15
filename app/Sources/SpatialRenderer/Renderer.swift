@@ -15,7 +15,8 @@ public final class Renderer: NSObject, MTKViewDelegate {
     #include <metal_stdlib>
     using namespace metal;
 
-    struct Uniforms { float4x4 mvp; float width; float height; float curveRadius; int columns; int hasTexture; };
+    struct Uniforms { float4x4 mvp; float width; float height; float curveRadius; int columns; int hasTexture;
+                      int highlight; };
     struct VOut { float4 position [[position]]; float2 uv; };
 
     // Triangle strip over `columns` vertical strips, in image orientation: x right, y down; uv (0,0) = top-left of
@@ -38,6 +39,13 @@ public final class Renderer: NSObject, MTKViewDelegate {
     fragment float4 quad_fragment(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]],
                                   texture2d<float> tex [[texture(0)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
+        // A screen being moved gets a yellow outline 2 cm wide.
+        if (u.highlight != 0) {
+            float bx = 0.02 / u.width, by = 0.02 / u.height;
+            if (in.uv.x < bx || in.uv.x > 1.0 - bx || in.uv.y < by || in.uv.y > 1.0 - by) {
+                return float4(1.0, 0.84, 0.04, 1.0);
+            }
+        }
         if (u.hasTexture != 0) {
             return tex.sample(s, in.uv);
         }
@@ -53,6 +61,7 @@ public final class Renderer: NSObject, MTKViewDelegate {
         var curveRadius: Float
         var columns: Int32
         var hasTexture: Int32
+        var highlight: Int32
     }
 
     /// Strips per curved screen: at 48 the chord of a 1 m wide, 1000R screen is within 0.03 mm of the arc.
@@ -63,10 +72,13 @@ public final class Renderer: NSObject, MTKViewDelegate {
         public var placement: ScreenPlacement
         /// The captured display; nil draws a placeholder.
         public var texture: MTLTexture?
+        /// Outlined (the screen being moved).
+        public var highlighted: Bool
 
-        public init(placement: ScreenPlacement, texture: MTLTexture?) {
+        public init(placement: ScreenPlacement, texture: MTLTexture?, highlighted: Bool = false) {
             self.placement = placement
             self.texture = texture
+            self.highlighted = highlighted
         }
     }
 
@@ -172,7 +184,7 @@ public final class Renderer: NSObject, MTKViewDelegate {
                 let columns = p.curveRadius > 0 ? Self.curvedColumns : 1
                 var u = Uniforms(mvp: simd_float4x4(viewProjection * p.pose), width: Float(p.width), height: Float(p.height),
                                  curveRadius: Float(p.curveRadius), columns: Int32(columns),
-                                 hasTexture: screen.texture == nil ? 0 : 1)
+                                 hasTexture: screen.texture == nil ? 0 : 1, highlight: screen.highlighted ? 1 : 0)
                 enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 enc.setFragmentTexture(screen.texture, index: 0)

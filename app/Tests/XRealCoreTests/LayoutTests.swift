@@ -298,4 +298,84 @@ final class LayoutTests: XCTestCase {
         XCTAssertNil(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 9.0), "not counted from before the pause")
         XCTAssertEqual(f.update(looking: 2, pointer: 1, pointerMovable: true, now: 9.2), 2)
     }
+
+    func testNewScreenAppearsWhereYouLook() throws {
+        // Looking to the right of the row near the horizon: it joins the row there, right of screen 3.
+        var l = Layout.threeInARow
+        let right = try XCTUnwrap(l.addScreen(lookingAt: HeadPose(yaw: 120, pitch: 4, roll: 0)))
+        XCTAssertEqual(right.pitch, 0)
+        XCTAssertGreaterThan(right.yaw, l.screen(3)!.yaw)
+        XCTAssertEqual(l.screen(1)?.yaw, 0, "the screen straight ahead stays put")
+        assertPacked(l)
+        // Looking between screens 1 and 2: it slots in between and pushes screen 2 out.
+        var m = Layout.threeInARow
+        let before2 = m.screen(2)!.yaw
+        let mid = try XCTUnwrap(m.addScreen(lookingAt: HeadPose(yaw: before2 / 2, pitch: -3, roll: 0)))
+        XCTAssertEqual(rowEdges(m).map(\.id), [2, mid.id, 1, 3])
+        XCTAssertLessThan(m.screen(2)!.yaw, before2)
+        assertPacked(m)
+        // Looking up or down: above or below the row, at that yaw, leaving the row alone.
+        var n = Layout.threeInARow
+        let up = try XCTUnwrap(n.addScreen(lookingAt: HeadPose(yaw: -30, pitch: 35, roll: 0)))
+        XCTAssertEqual(up.pitch, Layout.bandPitch)
+        XCTAssertEqual(up.yaw, -30, accuracy: 1e-9)
+        let down = try XCTUnwrap(n.addScreen(lookingAt: HeadPose(yaw: 10, pitch: -20, roll: 0)))
+        XCTAssertEqual(down.pitch, -Layout.bandPitch)
+        XCTAssertEqual(n.screens.filter(\.inRow).map(\.yaw), Layout.threeInARow.screens.map(\.yaw))
+        // Copies the screen straight ahead; stops at the limit.
+        XCTAssertEqual(up.diagonalInches, n.screen(1)?.diagonalInches)
+        while n.screens.count < Layout.maxScreens { XCTAssertNotNil(n.addScreen(lookingAt: HeadPose(yaw: 0, pitch: 0, roll: 0))) }
+        XCTAssertNil(n.addScreen(lookingAt: HeadPose(yaw: 0, pitch: 0, roll: 0)))
+    }
+
+    func testCarriedScreenFollowsTheHeadAndSnapsIntoTheRowWhenDropped() throws {
+        var l = Layout.threeInARow
+        let s3 = try XCTUnwrap(l.screen(3))
+        // Picked up while looking 5° left of its centre: it keeps that offset as the head turns.
+        let grab = Grab(screen: s3, head: HeadPose(yaw: s3.yaw - 5, pitch: 2, roll: 0))
+        var p = grab.position(head: HeadPose(yaw: -60, pitch: 6, roll: 0))
+        XCTAssertEqual(p.yaw, -55, accuracy: 1e-9)
+        XCTAssertEqual(p.pitch, 4, accuracy: 1e-9)
+        // Carried past straight behind: yaw wraps instead of growing past 180.
+        p = Grab(screen: SpatialScreen(id: 9, yaw: 170), head: HeadPose(yaw: 0, pitch: 0, roll: 0))
+            .position(head: HeadPose(yaw: 30, pitch: 0, roll: 0))
+        XCTAssertEqual(p.yaw, -160, accuracy: 1e-9)
+        // While carried nothing else moves; dropped left of screen 2, it joins the row at the left end.
+        let others = l.screens.filter { $0.id != 3 }
+        l.move(3, yaw: -20, pitch: 6)  // over the gap between screens 2 and 1: packing would push screen 2 aside
+        XCTAssertEqual(l.screens.filter { $0.id != 3 }, others)
+        XCTAssertEqual(l.screen(3)?.yaw, -20, "exactly where the head put it")
+        XCTAssertEqual(l.screen(3)?.pitch, 6)
+        l.move(3, yaw: -90, pitch: 6)
+        l.drop(3)
+        XCTAssertEqual(l.screen(3)?.pitch, 0)
+        XCTAssertEqual(rowEdges(l).map(\.id), [3, 2, 1])
+        assertPacked(l)
+        // Dropped high up: it stays there, and the row closes the gap.
+        l.move(2, yaw: 5, pitch: 30)
+        l.drop(2)
+        XCTAssertEqual(l.screen(2)?.pitch, 30)
+        XCTAssertEqual(rowEdges(l).map(\.id), [3, 1])
+        assertPacked(l)
+    }
+
+    func testSizeAndDistanceStep() {
+        XCTAssertEqual(ScreenSteps.next(40, in: ScreenSteps.sizes, up: true), 48)
+        XCTAssertEqual(ScreenSteps.next(40, in: ScreenSteps.sizes, up: false), 32)
+        XCTAssertEqual(ScreenSteps.next(41, in: ScreenSteps.sizes, up: false), 40, "between steps: the step below")
+        XCTAssertEqual(ScreenSteps.next(41, in: ScreenSteps.sizes, up: true), 48)
+        XCTAssertEqual(ScreenSteps.next(85, in: ScreenSteps.sizes, up: true), 85, "stays at the end")
+        XCTAssertEqual(ScreenSteps.next(1.0, in: ScreenSteps.distances, up: false), 1.0)
+        XCTAssertEqual(ScreenSteps.next(1.6, in: ScreenSteps.distances, up: true), 2.0)
+    }
+
+    func testDoublePressNeedsTheSameButtonTwiceQuickly() {
+        var d = DoublePress(window: 0.45)
+        XCTAssertFalse(d.down(key: 3, now: 0))
+        XCTAssertTrue(d.down(key: 3, now: 0.3))
+        XCTAssertFalse(d.down(key: 3, now: 0.5), "a third press starts a new pair")
+        XCTAssertFalse(d.down(key: 3, now: 1.2), "too slow")
+        XCTAssertFalse(d.down(key: 2, now: 1.3), "another button")
+        XCTAssertTrue(d.down(key: 2, now: 1.6))
+    }
 }
