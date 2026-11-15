@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import Carbon.HIToolbox
 import CVirtualDisplay
 import GlassesLink
 import MetalKit
@@ -51,6 +52,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusLines: [NSMenuItem] = []
     private var permissionRequested = false
     private var gazeFocus = GazeFocus()
+    private var hotkeys: Hotkeys?
+    /// The screen being carried by the head (⌃⌥⌘G), if any.
+    private var grab: Grab?
+    /// False after the glasses report being taken off, until put on again (or reconnected, or recentered).
+    private var glassesOn = true
+    private var doublePress = DoublePress()
+    /// "Double-press a glasses button: recenter" (menu). Off by default: the buttons also change the brightness.
+    private var buttonRecenter = UserDefaults.standard.bool(forKey: "buttonRecenter")
     /// "Pointer follows your gaze" (menu); remembered across runs, on by default.
     private var pointerFollowsGaze = UserDefaults.standard.object(forKey: "pointerFollowsGaze") as? Bool ?? true
 
@@ -108,8 +117,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if options.sbs { setSideBySide(true) }
         makeStatusItem()
+        hotkeys = Hotkeys(shortcuts())
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated { self.tick() }
+        }
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
+            MainActor.assumeIsolated { self.carry() }
         }
         Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
             MainActor.assumeIsolated { self.followGaze() }
@@ -228,7 +241,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// it, or the user rearranges in System Settings, that stays. A failed attempt is retried on the next change.
     private func arrangeDisplays() {
         let ours = Set(slots.values.map(\.displayID))
-        guard !ours.isEmpty else { return }
+        // While a screen is carried its yaw changes every frame; dropping it applies the layout and arranges once.
+        guard !ours.isEmpty, grab == nil else { return }
         var count: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
@@ -307,9 +321,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startGlasses() {
         let head = self.head, modes = self.modes
-        let link = GlassesLink(configuration: GlassesLink.Configuration(host: options.host)) { event in
+        let link = GlassesLink(configuration: GlassesLink.Configuration(host: options.host)) { [weak self] event in
             head.handle(event)
             modes.handle(event)
+            switch event {
+            case .control(.button(let b)):
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.glassesButton(b) } }
+            case .control(.wear(let w)):
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.wear(w) } }
+            case .connected(.control):
+                // A reconnect means they were plugged in again: whatever the last wear event said, show the image.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.resumeIfPaused(why: "glasses connected") } }
+            default:
+                break
+            }
         }
         Log.line("glasses: connecting to \(options.host)")
         modes.attach(link)
@@ -462,7 +487,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let screens = layout.screens.map { s -> Renderer.Screen in
             let frame = slots[s.id]?.capture?.latestFrame
             if let frame { backings.append(frame.backing) }
-            return Renderer.Screen(placement: s.placement, texture: frame?.texture)
+            return Renderer.Screen(placement: s.placement, texture: frame?.texture, highlighted: grab?.screen == s.id)
         }
         return (Renderer.Scene(displays: displays, head: head.orientation, screens: screens), backings)
     }
@@ -583,6 +608,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(submenu("Screens", screensMenu()))
         menu.addItem(submenu("Layouts", layoutsMenu()))
+        menu.addItem(submenu("Shortcuts", shortcutsMenu()))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit XReal Desk", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         updateStatus()
@@ -597,8 +623,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private static let sizes: [Double] = [27, 32, 40, 48, 55, 65, 85]
-    private static let distances: [Double] = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
     private static let shapes: [(radius: Double, title: String)] = [
         (0, "Flat"), (4, "Curved 4000R"), (2.5, "Curved 2500R"), (1.8, "Curved 1800R"), (1, "Curved 1000R"),
     ]
@@ -606,7 +630,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         (1920, 1080, "1920×1080 (16:9)"), (2560, 1440, "2560×1440 (16:9)"), (2560, 1080, "2560×1080 (21:9)"),
         (3440, 1440, "3440×1440 (21:9)"), (3840, 1080, "3840×1080 (32:9)"), (1080, 1920, "1080×1920 (portrait)"),
     ]
-    private static let positions: [(pitch: Double, title: String)] = [(0, "In the row"), (25, "Above the row"), (-25, "Below the row")]
+    private static let positions: [(pitch: Double, title: String)] = [
+        (0, "In the row"), (Layout.bandPitch, "Above the row"), (-Layout.bandPitch, "Below the row"),
+    ]
 
     private func screensMenu() -> [NSMenuItem] {
         var items = layout.screens.map { s -> NSMenuItem in
@@ -625,10 +651,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func screenMenu(_ s: SpatialScreen) -> [NSMenuItem] {
         let id = s.id
         func edit(_ change: @escaping (inout SpatialScreen) -> Void) -> () -> Void {
-            { [weak self] in self?.changeLayout { $0.update(id, change) } }
+            { [weak self] in self?.editScreen(id, change) }
         }
-        let sizes = Self.sizes.map { d in ActionItem(String(format: "%.0f″", d), checked: s.diagonalInches == d, edit { $0.diagonalInches = d }) }
-        let distances = Self.distances.map { d in ActionItem(String(format: "%.2g m", d), checked: s.distance == d, edit { $0.distance = d }) }
+        let sizes = ScreenSteps.sizes.map { d in ActionItem(String(format: "%.0f″", d), checked: s.diagonalInches == d, edit { $0.diagonalInches = d }) }
+        let distances = ScreenSteps.distances.map { d in ActionItem(String(format: "%.2g m", d), checked: s.distance == d, edit { $0.distance = d }) }
         let shapes = Self.shapes.map { r in ActionItem(r.title, checked: s.curveRadius == r.radius, edit { $0.curveRadius = r.radius }) }
         let resolutions = Self.resolutions.map { r in
             ActionItem(r.title, checked: s.pixelWidth == r.w && s.pixelHeight == r.h, edit { $0.pixelWidth = r.w; $0.pixelHeight = r.h })
@@ -646,6 +672,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func layoutsMenu() -> [NSMenuItem] {
         func choose(_ l: Layout) -> NSMenuItem {
             ActionItem(l.name, checked: l == layout) { [weak self] in
+                // Screen IDs repeat across layouts: a carried screen must not take over one in the new layout.
+                self?.grab = nil
                 self?.changeLayout { $0 = l }
                 Log.line("layout: \"\(l.name)\"")
             }
@@ -697,7 +725,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// pointer is always on a screen they can see and use. Leaves it alone while a mouse button is held (dragging a
     /// window between screens) and when it is on a display other than ours or the one under the 3D image.
     private func followGaze() {
-        guard pointerFollowsGaze, !slots.isEmpty, head.calibration != nil,
+        guard pointerFollowsGaze, glassesOn, !slots.isEmpty, head.calibration != nil,
               let location = CGEvent(source: nil)?.location else { return gazeFocus.reset() }
         var under: CGDirectDisplayID = 0
         var count: UInt32 = 0
@@ -718,7 +746,151 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Log.line(String(format: "pointer → screen %d at (%.0f, %.0f)", target, point.x, point.y))
     }
 
+    // MARK: shortcuts, buttons, wear (milestone 5)
+
+    private func shortcuts() -> [Hotkeys.Key] {
+        [
+            Hotkeys.Key(code: kVK_ANSI_N, symbol: "N", title: "New screen where you look") { [weak self] in self?.newScreenWhereLooking() },
+            Hotkeys.Key(code: kVK_ANSI_W, symbol: "W", title: "Remove the screen you look at") { [weak self] in self?.removeLookedAt() },
+            Hotkeys.Key(code: kVK_ANSI_G, symbol: "G", title: "Pick up / drop the screen you look at") { [weak self] in self?.toggleGrab() },
+            Hotkeys.Key(code: kVK_ANSI_Equal, symbol: "=", title: "Bigger") { [weak self] in self?.resize(up: true) },
+            Hotkeys.Key(code: kVK_ANSI_Minus, symbol: "-", title: "Smaller") { [weak self] in self?.resize(up: false) },
+            Hotkeys.Key(code: kVK_ANSI_RightBracket, symbol: "]", title: "Farther") { [weak self] in self?.push(away: true) },
+            Hotkeys.Key(code: kVK_ANSI_LeftBracket, symbol: "[", title: "Closer") { [weak self] in self?.push(away: false) },
+            Hotkeys.Key(code: kVK_ANSI_R, symbol: "R", title: "Recenter") { [weak self] in self?.recenter() },
+        ]
+    }
+
+    private func shortcutsMenu() -> [NSMenuItem] {
+        var items: [NSMenuItem] = (hotkeys?.registered ?? []).map { key in
+            ActionItem("\(key.title)    \(Hotkeys.modifierSymbols)\(key.symbol)") { key.action() }
+        }
+        if items.isEmpty { items.append(ActionItem("No shortcuts available (see log)", enabled: false) {}) }
+        items.append(.separator())
+        items.append(ActionItem("Double-press a glasses button: recenter", checked: buttonRecenter) { [weak self] in
+            guard let self else { return }
+            buttonRecenter.toggle()
+            UserDefaults.standard.set(buttonRecenter, forKey: "buttonRecenter")
+            Log.line("double-press to recenter: \(buttonRecenter ? "on" : "off")")
+        })
+        return items
+    }
+
+    /// The screen being carried, else the one looked at.
+    private func targetScreen(_ what: String) -> Int? {
+        if let grab { return grab.screen }
+        guard let id = layout.gaze(head: head.orientation)?.screen else {
+            Log.line("shortcut: \(what): not looking at a screen")
+            NSSound.beep()
+            return nil
+        }
+        return id
+    }
+
+    private func newScreenWhereLooking() {
+        guard layout.screens.count < Layout.maxScreens else {
+            Log.line("shortcut: new screen: the layout already has \(Layout.maxScreens)")
+            NSSound.beep()
+            return
+        }
+        let pose = HeadPose(head.orientation)
+        var added: SpatialScreen?
+        changeLayout { added = $0.addScreen(lookingAt: pose) }
+        if let added {
+            Log.line(String(format: "shortcut: new screen %d at yaw %.0f° pitch %.0f°", added.id, added.yaw, added.pitch))
+        }
+    }
+
+    private func removeLookedAt() {
+        guard let id = targetScreen("remove") else { return }
+        guard layout.screens.count > 1 else {
+            Log.line("shortcut: remove: keeping the last screen")
+            NSSound.beep()
+            return
+        }
+        if grab?.screen == id { grab = nil }
+        changeLayout { $0.removeScreen(id) }
+        Log.line("shortcut: removed screen \(id)")
+    }
+
+    /// Picks up the screen looked at (it then follows the head, outlined) or drops the one being carried.
+    private func toggleGrab() {
+        if let g = grab {
+            grab = nil
+            changeLayout { $0.drop(g.screen) }
+            Log.line("shortcut: dropped screen \(g.screen)")
+            return
+        }
+        guard let id = targetScreen("pick up"), let s = layout.screen(id) else { return }
+        grab = Grab(screen: s, head: HeadPose(head.orientation))
+        Log.line("shortcut: picked up screen \(id); \(Hotkeys.modifierSymbols)G again to drop it")
+    }
+
+    /// Moves the carried screen with the head (60 Hz). Only the in-memory layout changes; dropping saves it and
+    /// rearranges the displays.
+    private func carry() {
+        guard let g = grab else { return }
+        guard layout.screen(g.screen) != nil else {
+            grab = nil
+            return
+        }
+        let p = g.position(head: HeadPose(head.orientation))
+        library.current.move(g.screen, yaw: p.yaw, pitch: p.pitch)
+    }
+
+    /// Changes one screen (menu or shortcut). The row is re-packed, except around a screen being carried: its
+    /// neighbours stay put until it is dropped.
+    private func editScreen(_ id: Int, _ change: @escaping (inout SpatialScreen) -> Void) {
+        let carried = grab?.screen == id
+        changeLayout { $0.update(id, pack: !carried, change) }
+    }
+
+    private func resize(up: Bool) {
+        guard let id = targetScreen(up ? "bigger" : "smaller") else { return }
+        editScreen(id) { $0.diagonalInches = ScreenSteps.next($0.diagonalInches, in: ScreenSteps.sizes, up: up) }
+        Log.line(String(format: "shortcut: screen %d now %.0f″", id, layout.screen(id)?.diagonalInches ?? 0))
+    }
+
+    private func push(away: Bool) {
+        guard let id = targetScreen(away ? "farther" : "closer") else { return }
+        editScreen(id) { $0.distance = ScreenSteps.next($0.distance, in: ScreenSteps.distances, up: away) }
+        Log.line(String(format: "shortcut: screen %d now at %.2f m", id, layout.screen(id)?.distance ?? 0))
+    }
+
+    private func glassesButton(_ b: ButtonEvent) {
+        guard buttonRecenter, b.state == .down,
+              doublePress.down(key: b.key, now: ProcessInfo.processInfo.systemUptime) else { return }
+        Log.line("glasses: button \(b.key) pressed twice: recentering")
+        recenter()
+    }
+
+    private var renderView: MTKView? { renderWindow?.contentView as? MTKView }
+
+    /// Taken off: stop drawing and stop moving the pointer (the head pose no longer says where the user looks).
+    private func wear(_ w: WearState) {
+        switch w {
+        case .takenOff:
+            guard glassesOn else { return }
+            glassesOn = false
+            renderView?.isPaused = true
+            gazeFocus.reset()
+            Log.line("glasses taken off: rendering and pointer-follow paused (put them on, reconnect or recenter to resume)")
+        case .putOn:
+            resumeIfPaused(why: "glasses put on")
+        case .other:
+            break
+        }
+    }
+
+    private func resumeIfPaused(why: String) {
+        guard !glassesOn else { return }
+        glassesOn = true
+        renderView?.isPaused = false
+        Log.line("\(why): rendering and pointer-follow resumed")
+    }
+
     private func recenter() {
+        resumeIfPaused(why: "recentered")
         head.recenter()
         Log.line("recentered")
     }
@@ -746,6 +918,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard statusLines.count == 3 else { return }
         statusLines[0].title = head.status
         statusLines[1].title = "Layout: \(layout.name), \(slots.count) of \(layout.screens.count) screen(s) live"
+            + (grab.map { " · carrying screen \($0.screen) (\(Hotkeys.modifierSymbols)G drops it)" } ?? "")
+            + (glassesOn ? "" : " · paused: glasses off")
         let statuses = Set(slots.values.map(\.captureStatus))
         let capture = statuses.count == 1 ? statuses.first! : statuses.sorted().joined(separator: " / ")
         statusLines[2].title = "Capture: \(capture.isEmpty ? "none" : capture)"

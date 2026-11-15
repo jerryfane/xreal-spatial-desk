@@ -70,6 +70,15 @@ the glasses' display). Black is see-through on the glasses.
   the pointer jumps onto it at the spot you look at, so it is always on a screen you can see and click. It is left
   alone while a mouse button is held (drag windows between screens) and while it is on a monitor other than the
   glasses. Needs no permission.
+- **Shortcuts** (global, ⌃⌥⌘ + key, no permission; listed under **XR › Shortcuts**, where each can also be clicked):
+  **N** new screen where you look (into the row near the horizon, else above/below), **W** remove the screen you
+  look at, **G** pick up the screen you look at — it follows your head, outlined in yellow — and **G** again to drop
+  it (near the horizon it snaps into the row at that spot), **=**/**-** bigger/smaller, **]**/**[** farther/closer,
+  **R** recenter. While a screen is carried, the size and distance keys act on it. A shortcut another app already
+  owns is skipped and named in the log.
+- **Glasses taken off** (wear event): rendering and pointer-follow pause until they are put on, plugged in again, or
+  Recenter is used. **Double-press a glasses button: recenter** (Shortcuts menu) is off by default, because the
+  buttons also change the brightness.
 - **Layouts:** presets *One screen*, *Three in a row*, *Desk (four screens)*; **Save current layout as…** and the saved
   layouts. The current and saved layouts are kept in `~/Library/Application Support/XRealDesk/layouts.json`; an
   unreadable file is renamed `layouts.json.bad` and the app starts with one screen. `--layout NAME` starts with a

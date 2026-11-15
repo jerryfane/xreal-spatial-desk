@@ -96,16 +96,53 @@ public struct Layout: Codable, Equatable, Sendable {
     @discardableResult
     public mutating func addScreen() -> SpatialScreen? {
         guard screens.count < Self.maxScreens else { return nil }
-        let template = rowAnchor ?? screens.first ?? Layout.single.screens[0]
+        let template = self.template
         let row = screens.filter(\.inRow)
         let left = row.filter { $0.yaw < template.yaw }.count, right = row.filter { $0.yaw > template.yaw }.count
+        return insert(yaw: row.isEmpty ? 0 : (right <= left ? (row.map(\.yaw).max()! + 1) : (row.map(\.yaw).min()! - 1)),
+                      pitch: 0)
+    }
+
+    /// Adds a screen like the one closest to straight ahead where the head points: into the row at that point
+    /// (neighbours move aside) when looking near the horizon, else above or below the row at that yaw. Returns nil
+    /// when the layout is full.
+    @discardableResult
+    public mutating func addScreen(lookingAt head: HeadPose) -> SpatialScreen? {
+        guard screens.count < Self.maxScreens else { return nil }
+        let pitch = abs(head.pitch) < SpatialScreen.rowPitchLimit ? 0 : (head.pitch > 0 ? Self.bandPitch : -Self.bandPitch)
+        return insert(yaw: head.yaw, pitch: pitch)
+    }
+
+    /// Pitch of screens above (+) or below (−) the row when created there.
+    public static let bandPitch = 25.0
+
+    /// The screen new ones copy: the one closest to straight ahead.
+    private var template: SpatialScreen { rowAnchor ?? screens.first ?? Layout.single.screens[0] }
+
+    private mutating func insert(yaw: Double, pitch: Double) -> SpatialScreen? {
         var new = template
         new.id = (screens.map(\.id).max() ?? 0) + 1
-        new.pitch = 0
-        new.yaw = row.isEmpty ? 0 : (right <= left ? (row.map(\.yaw).max()! + 1) : (row.map(\.yaw).min()! - 1))
-        screens.append(new)
+        new.yaw = yaw
+        new.pitch = pitch
+        screens.append(new.clamped)
         packRow()
         return screen(new.id)
+    }
+
+    /// Puts a screen at (yaw, pitch) without moving any other: for a screen being carried. `drop` settles it.
+    public mutating func move(_ id: Int, yaw: Double, pitch: Double) {
+        guard let i = screens.firstIndex(where: { $0.id == id }) else { return }
+        screens[i].yaw = yaw
+        screens[i].pitch = pitch
+        screens[i] = screens[i].clamped
+    }
+
+    /// Settles a carried screen: near the horizon it snaps into the row (at the slot its yaw falls in, neighbours
+    /// moving aside); above or below it stays where it was dropped.
+    public mutating func drop(_ id: Int) {
+        guard let i = screens.firstIndex(where: { $0.id == id }) else { return }
+        if screens[i].inRow { screens[i].pitch = 0 }
+        packRow()
     }
 
     public mutating func removeScreen(_ id: Int) {
@@ -113,12 +150,13 @@ public struct Layout: Codable, Equatable, Sendable {
         packRow()
     }
 
-    /// Changes one screen and re-packs the row, so a bigger or curved screen pushes its neighbours aside.
-    public mutating func update(_ id: Int, _ change: (inout SpatialScreen) -> Void) {
+    /// Changes one screen and re-packs the row, so a bigger or curved screen pushes its neighbours aside. With
+    /// `pack: false` (a screen being carried) nothing else moves; `drop` settles the row.
+    public mutating func update(_ id: Int, pack: Bool = true, _ change: (inout SpatialScreen) -> Void) {
         guard let i = screens.firstIndex(where: { $0.id == id }) else { return }
         change(&screens[i])
         screens[i] = screens[i].clamped
-        packRow()
+        if pack { packRow() }
     }
 
     /// The row screen closest to straight ahead; it stays where it is when the row is packed.
@@ -297,6 +335,61 @@ public enum DisplayArrangement {
         band(above) { i, _ in top - i.height }
         band(below) { i, x in rowBottom(x: x, width: i.width) }
         return out
+    }
+}
+
+/// Menu and shortcut steps for a screen's size and distance.
+public enum ScreenSteps {
+    public static let sizes: [Double] = [27, 32, 40, 48, 55, 65, 85]
+    public static let distances: [Double] = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+
+    /// The next value in `steps` above (`up`) or below `value`, or `value` itself at the end of the list. A value
+    /// between steps goes to the neighbouring step in that direction.
+    public static func next(_ value: Double, in steps: [Double], up: Bool) -> Double {
+        up ? steps.first { $0 > value + 1e-9 } ?? value : steps.last { $0 < value - 1e-9 } ?? value
+    }
+}
+
+/// A screen carried by the head: it keeps the offset from the gaze it had when picked up, so it does not jump.
+public struct Grab: Equatable, Sendable {
+    public let screen: Int
+    let screenStart: (yaw: Double, pitch: Double)
+    let headStart: (yaw: Double, pitch: Double)
+
+    public init(screen: SpatialScreen, head: HeadPose) {
+        self.screen = screen.id
+        screenStart = (screen.yaw, screen.pitch)
+        headStart = (head.yaw, head.pitch)
+    }
+
+    /// Where the screen is now; yaw wraps around behind the head.
+    public func position(head: HeadPose) -> (yaw: Double, pitch: Double) {
+        (remainder(screenStart.yaw + remainder(head.yaw - headStart.yaw, 360), 360),
+         min(max(screenStart.pitch + head.pitch - headStart.pitch, -80), 80))
+    }
+
+    public static func == (a: Grab, b: Grab) -> Bool {
+        a.screen == b.screen && a.screenStart == b.screenStart && a.headStart == b.headStart
+    }
+}
+
+/// Two presses of the same glasses button within `window` seconds.
+public struct DoublePress: Sendable {
+    public var window: Double
+    private var last: (key: UInt32, time: Double)?
+
+    public init(window: Double = 0.45) {
+        self.window = window
+    }
+
+    /// Feed every button-down; true on the second press of a pair (which then starts over).
+    public mutating func down(key: UInt32, now: Double) -> Bool {
+        if let last, last.key == key, now - last.time <= window {
+            self.last = nil
+            return true
+        }
+        last = (key, now)
+        return false
     }
 }
 
