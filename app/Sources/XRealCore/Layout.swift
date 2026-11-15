@@ -150,12 +150,13 @@ public struct Layout: Codable, Equatable, Sendable {
         packRow()
     }
 
-    /// Changes one screen and re-packs the row, so a bigger or curved screen pushes its neighbours aside.
-    public mutating func update(_ id: Int, _ change: (inout SpatialScreen) -> Void) {
+    /// Changes one screen and re-packs the row, so a bigger or curved screen pushes its neighbours aside. With
+    /// `pack: false` (a screen being carried) nothing else moves; `drop` settles the row.
+    public mutating func update(_ id: Int, pack: Bool = true, _ change: (inout SpatialScreen) -> Void) {
         guard let i = screens.firstIndex(where: { $0.id == id }) else { return }
         change(&screens[i])
         screens[i] = screens[i].clamped
-        packRow()
+        if pack { packRow() }
     }
 
     /// The row screen closest to straight ahead; it stays where it is when the row is packed.

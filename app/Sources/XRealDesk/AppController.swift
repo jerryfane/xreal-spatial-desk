@@ -630,7 +630,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         (1920, 1080, "1920×1080 (16:9)"), (2560, 1440, "2560×1440 (16:9)"), (2560, 1080, "2560×1080 (21:9)"),
         (3440, 1440, "3440×1440 (21:9)"), (3840, 1080, "3840×1080 (32:9)"), (1080, 1920, "1080×1920 (portrait)"),
     ]
-    private static let positions: [(pitch: Double, title: String)] = [(0, "In the row"), (25, "Above the row"), (-25, "Below the row")]
+    private static let positions: [(pitch: Double, title: String)] = [
+        (0, "In the row"), (Layout.bandPitch, "Above the row"), (-Layout.bandPitch, "Below the row"),
+    ]
 
     private func screensMenu() -> [NSMenuItem] {
         var items = layout.screens.map { s -> NSMenuItem in
@@ -649,7 +651,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func screenMenu(_ s: SpatialScreen) -> [NSMenuItem] {
         let id = s.id
         func edit(_ change: @escaping (inout SpatialScreen) -> Void) -> () -> Void {
-            { [weak self] in self?.changeLayout { $0.update(id, change) } }
+            { [weak self] in self?.editScreen(id, change) }
         }
         let sizes = ScreenSteps.sizes.map { d in ActionItem(String(format: "%.0f″", d), checked: s.diagonalInches == d, edit { $0.diagonalInches = d }) }
         let distances = ScreenSteps.distances.map { d in ActionItem(String(format: "%.2g m", d), checked: s.distance == d, edit { $0.distance = d }) }
@@ -670,6 +672,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func layoutsMenu() -> [NSMenuItem] {
         func choose(_ l: Layout) -> NSMenuItem {
             ActionItem(l.name, checked: l == layout) { [weak self] in
+                // Screen IDs repeat across layouts: a carried screen must not take over one in the new layout.
+                self?.grab = nil
                 self?.changeLayout { $0 = l }
                 Log.line("layout: \"\(l.name)\"")
             }
@@ -834,15 +838,22 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         library.current.move(g.screen, yaw: p.yaw, pitch: p.pitch)
     }
 
+    /// Changes one screen (menu or shortcut). The row is re-packed, except around a screen being carried: its
+    /// neighbours stay put until it is dropped.
+    private func editScreen(_ id: Int, _ change: @escaping (inout SpatialScreen) -> Void) {
+        let carried = grab?.screen == id
+        changeLayout { $0.update(id, pack: !carried, change) }
+    }
+
     private func resize(up: Bool) {
         guard let id = targetScreen(up ? "bigger" : "smaller") else { return }
-        changeLayout { $0.update(id) { $0.diagonalInches = ScreenSteps.next($0.diagonalInches, in: ScreenSteps.sizes, up: up) } }
+        editScreen(id) { $0.diagonalInches = ScreenSteps.next($0.diagonalInches, in: ScreenSteps.sizes, up: up) }
         Log.line(String(format: "shortcut: screen %d now %.0f″", id, layout.screen(id)?.diagonalInches ?? 0))
     }
 
     private func push(away: Bool) {
         guard let id = targetScreen(away ? "farther" : "closer") else { return }
-        changeLayout { $0.update(id) { $0.distance = ScreenSteps.next($0.distance, in: ScreenSteps.distances, up: away) } }
+        editScreen(id) { $0.distance = ScreenSteps.next($0.distance, in: ScreenSteps.distances, up: away) }
         Log.line(String(format: "shortcut: screen %d now at %.2f m", id, layout.screen(id)?.distance ?? 0))
     }
 

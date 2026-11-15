@@ -351,6 +351,15 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.screen(3)?.pitch, 0)
         XCTAssertEqual(rowEdges(l).map(\.id), [3, 2, 1])
         assertPacked(l)
+        // Resized while carried over the row: only it changes; the row settles on drop.
+        l.move(3, yaw: -20, pitch: 0)
+        let before = l.screens.filter { $0.id != 3 }
+        l.update(3, pack: false) { $0.diagonalInches = 85 }
+        XCTAssertEqual(l.screens.filter { $0.id != 3 }, before)
+        XCTAssertEqual(l.screen(3)?.yaw, -20)
+        XCTAssertEqual(l.screen(3)?.diagonalInches, 85)
+        l.drop(3)
+        assertPacked(l)
         // Dropped high up: it stays there, and the row closes the gap.
         l.move(2, yaw: 5, pitch: 30)
         l.drop(2)
